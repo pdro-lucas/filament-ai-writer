@@ -3,7 +3,9 @@ namespace PdroLucas\FilamentAiWriter\Actions;
 
 use Filament\Actions\Action;
 use Filament\Facades\Filament;
+use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Textarea;
+use Filament\Forms\Components\Toggle;
 use Filament\Notifications\Notification;
 use Filament\Schemas\Components\Utilities\Set;
 use Filament\Schemas\Components\Utilities\Get;
@@ -22,6 +24,11 @@ class AiWriterAction extends Action
   protected bool $normalizeArrayCase = false;
   protected array $allowedValues = [];
   protected array $valueMap = [];
+
+  // Modal controls
+  protected bool $showToneControl = false;
+  protected bool $showLengthControl = false;
+  protected bool $showEmojiControl = false;
 
   /** @var callable|null */
   protected $beforeGenerateCallback = null;
@@ -86,6 +93,24 @@ class AiWriterAction extends Action
     return $this;
   }
 
+  public function withToneControl(bool $condition = true): static
+  {
+    $this->showToneControl = $condition;
+    return $this;
+  }
+
+  public function withLengthControl(bool $condition = true): static
+  {
+    $this->showLengthControl = $condition;
+    return $this;
+  }
+
+  public function withEmojiControl(bool $condition = true): static
+  {
+    $this->showEmojiControl = $condition;
+    return $this;
+  }
+
   /**
    * Register a callback to run before generation for this specific action instance.
    * Return false to cancel generation.
@@ -119,14 +144,48 @@ class AiWriterAction extends Action
           return [];
         }
 
-        return [
+        $fields = [
           Textarea::make("ai_input")
             ->label("What do you want to write?")
             ->placeholder("Briefly describe...")
             ->required()
+            ->minLength(10)
             ->rows(4)
-            ->autofocus(),
+            ->autofocus()
+            ->columnSpanFull(),
         ];
+
+        if ($this->showToneControl) {
+          $fields[] = Select::make("ai_tone")
+            ->label("Tone")
+            ->options([
+              "professional" => "Professional",
+              "casual" => "Casual",
+              "formal" => "Formal",
+              "friendly" => "Friendly",
+              "persuasive" => "Persuasive",
+            ])
+            ->placeholder("Default")
+            ->native(false);
+        }
+
+        if ($this->showLengthControl) {
+          $fields[] = Select::make("ai_length")
+            ->label("Length")
+            ->options([
+              "short" => "Short",
+              "medium" => "Medium",
+              "long" => "Long",
+            ])
+            ->placeholder("Default")
+            ->native(false);
+        }
+
+        if ($this->showEmojiControl) {
+          $fields[] = Toggle::make("ai_emojis")->label("Use emojis")->default(false);
+        }
+
+        return $fields;
       })
       ->action(function (array $data, Get $get, Set $set): void {
         if (!$this->runBeforeGenerateHooks()) {
@@ -137,7 +196,8 @@ class AiWriterAction extends Action
           $this->runSilent($get, $set);
         } else {
           $provider = app(AiProvider::class);
-          $result = $provider->generate($this->aiPrompt, $data["ai_input"]);
+          $prompt = $this->buildPromptWithControls($this->aiPrompt, $data);
+          $result = $provider->generate($prompt, $data["ai_input"]);
 
           if ($this->expectArray) {
             $parsed = $this->parseArrayResult($result, $this->normalizeArrayCase);
@@ -153,6 +213,35 @@ class AiWriterAction extends Action
           $this->notifyGenerationSuccess();
         }
       });
+  }
+
+  protected function buildPromptWithControls(string $basePrompt, array $data)
+  {
+    $instructions = [];
+
+    if (!empty($data["ai_tone"])) {
+      $instructions[] = "Tone: {$data["ai_tone"]}.";
+    }
+
+    if (!empty($data["ai_length"])) {
+      $lengthMap = [
+        "short" => "Keep the response short and concise.",
+        "medium" => "Write a medium-length response.",
+        "long" => "Write a detailed and comprehensive response.",
+      ];
+
+      $instructions[] = $lengthMap[$data["ai_length"]] ?? "";
+    }
+
+    if (isset($data["ai_emojis"])) {
+      $instructions[] = $data["ai_emojis"] ? "You may use emojis where appropiate." : "Do not use any emojis.";
+    }
+
+    if (empty($instructions)) {
+      return $basePrompt;
+    }
+
+    return $basePrompt . "\n\nAdditional instructions:\n" . implode("\n", $instructions);
   }
 
   /**
