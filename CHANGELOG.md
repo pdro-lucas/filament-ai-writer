@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/pdro-lucas/filament-ai-writer/compare/v0.5.1...v0.6.0) (2026-05-10)
+
+
+### Features
+
+* add modal tone/length/emoji controls and performance improvements ([355c58d](https://github.com/pdro-lucas/filament-ai-writer/commit/355c58d06bb5ba806ed5d08e9a8e57943951ff1f))
+
 ## [0.5.1](https://github.com/pdro-lucas/filament-ai-writer/compare/v0.5.0...v0.5.1) (2026-05-10)
 
 
