@@ -86,7 +86,7 @@ class AiWriterAction extends Action
   }
 
   /**
-   * Register a callback to run before generation for this specific action instrance.
+   * Register a callback to run before generation for this specific action instance.
    * Return false to cancel generation.
    */
   public function beforeGenerate(callable $callback): static
