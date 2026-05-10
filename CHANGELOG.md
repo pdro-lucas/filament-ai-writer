@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.4.0](https://github.com/pdro-lucas/filament-ai-writer/compare/v0.3.1...v0.4.0) (2026-05-10)
+
+
+### Features
+
+* add configurable HTTP timeout and retry settings to AI providers ([4d08b63](https://github.com/pdro-lucas/filament-ai-writer/commit/4d08b634e589b58fc540c37d4dabeaab1410c0f0))
+
+
+### Documentation
+
+* document timeout and retry environment variables ([8eb182e](https://github.com/pdro-lucas/filament-ai-writer/commit/8eb182e63c4bb211bcd68133b434c59896f806ee))
+
 ## [0.3.1](https://github.com/pdro-lucas/filament-ai-writer/compare/v0.3.0...v0.3.1) (2026-05-10)
 
 
