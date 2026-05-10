@@ -161,6 +161,26 @@ TagsInput::make('tags')
     ),
 ```
 
+```php
+// Dynamically from the database
+$tags = Tag::all()->pluck('name')->toArray();
+
+TagsInput::make('tags')
+    ->hintAction(
+        AiWriterAction::make('ai_tags')
+            ->targetField('tags')
+            ->contextFields(['title', 'body'])
+            ->allowedValues($tags)
+            ->normalizeArrayCase()
+            ->prompt('
+                Suggest relevant tags based on the title and body.
+                Return ONLY a raw JSON array of strings from the allowed list, no markdown, no explanation.
+                Example: ["laravel","filament","php"]
+            ')
+            ->silent()
+    ),
+```
+
 When no `->allowedValues()` is provided but the target field still expects an array, use `->expectArray()`:
 
 ```php
@@ -258,7 +278,7 @@ public function register(): void
 
 ## Local development
 
-To use this package in a local project without publishing to Packagist, add a path repository to your project's `composer.json`:
+To use this package in a local project, add a path repository to your project's `composer.json`:
 
 ```json
 {
