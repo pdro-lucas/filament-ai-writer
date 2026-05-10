@@ -15,15 +15,17 @@ class OpenAiProvider implements AiProvider
     $retryTimes = (int) config("filament-ai-writer.retry_times", 2);
     $retrySleepMs = (int) config("filament-ai-writer.retry_sleep_ms", 500);
 
+    $payload = [
+      "model" => $config["model"],
+      "max_completion_tokens" => (int) config("filament-ai-writer.max_tokens"),
+      "messages" => [["role" => "system", "content" => $systemPrompt], ["role" => "user", "content" => $userInput]],
+    ];
+
     $response = Http::withToken($config["api_key"])
       ->connectTimeout($connectTimeout)
       ->timeout($timeout)
       ->retry($retryTimes, $retrySleepMs)
-      ->post("https://api.openai.com/v1/chat/completions", [
-        "model" => $config["model"],
-        "max_tokens" => config("filament-ai-writer.max_tokens"),
-        "messages" => [["role" => "system", "content" => $systemPrompt], ["role" => "user", "content" => $userInput]],
-      ])
+      ->post("https://api.openai.com/v1/chat/completions", $payload)
       ->throw();
 
     return $response->json("choices.0.message.content", "");
