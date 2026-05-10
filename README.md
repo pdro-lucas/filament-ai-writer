@@ -301,7 +301,7 @@ Dispatched after every successful AI generation. The payload contains:
 Listen to this event to debit credits, log usage, or send notifications:
 
 ```php
-// config/app.php or AppServiceProvider
+// app/Providers/EventServiceProvider.php
 use PdroLucas\FilamentAiWriter\Events\AiTextGenerated;
 
 protected $listen = [
