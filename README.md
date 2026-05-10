@@ -316,6 +316,11 @@ class DebitUserCredits
     public function handle(AiTextGenerated $event): void
     {
         $user = $event->payload['user'];
+
+        if ($user === null) {
+            return;
+        }
+
         $user->decrement('ai_credits');
     }
 }
