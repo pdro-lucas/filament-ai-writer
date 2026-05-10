@@ -45,7 +45,7 @@ If you need to customize the full configuration, publish the config file:
 php artisan vendor:publish --tag=filament-ai-writer-config
 ```
 
-This creates `config/filament-ai-writer.php` in your project, where you can set per-provider models, API keys, and token limits. Publishing is optional — the package works with just the `.env` variables.
+This creates `config/filament-ai-writer.php` in your project where you can set per-provider models, API keys, and token limits. Publishing is optional — the package works with just the `.env` variables.
 
 ## Usage
 
@@ -55,13 +55,16 @@ Import the action and attach it to any Filament form field using `hintAction` or
 use PdroLucas\FilamentAiWriter\Actions\AiWriterAction;
 ```
 
-### Markdown editor
+The action works in two modes: **interactive** and **silent**. Interactive mode opens a modal where the user describes what they want. Silent mode reads other fields from the current form as context and generates immediately, with no modal.
+
+### Interactive mode
+
+The user clicks the sparkles button, a modal opens with a free-text area, and the AI generates content based on the user input and the configured prompt. The result is injected into the target field.
 
 ```php
 use Filament\Forms\Components\MarkdownEditor;
 
 MarkdownEditor::make('content')
-    ->label('Content')
     ->hintAction(
         AiWriterAction::make()
             ->targetField('content')
@@ -73,31 +76,10 @@ MarkdownEditor::make('content')
     ),
 ```
 
-### Text input
-
-```php
-use Filament\Forms\Components\TextInput;
-
-TextInput::make('meta_description')
-    ->label('Meta Description')
-    ->suffixAction(
-        AiWriterAction::make('ai_meta')
-            ->targetField('meta_description')
-            ->prompt('
-                Write an SEO-friendly meta description under 155 characters.
-                Be direct and include a subtle call-to-action.
-                Return ONLY the text, no quotes or explanations.
-            ')
-    ),
-```
-
-### Textarea
-
 ```php
 use Filament\Forms\Components\Textarea;
 
 Textarea::make('excerpt')
-    ->label('Excerpt')
     ->hintAction(
         AiWriterAction::make('ai_excerpt')
             ->targetField('excerpt')
@@ -109,42 +91,149 @@ Textarea::make('excerpt')
     ),
 ```
 
-### How it works
+### Silent mode
 
-When the user clicks the sparkles button on a field, a modal opens with a free-text area. The user describes what they want to write, submits, and the AI generates the text based on the configured prompt. The result is automatically injected into the target field.
+The user clicks the button and the AI generates immediately, reading the specified context fields from the current form. No modal is shown. A success notification is displayed when generation completes.
 
-Each field gets its own `AiWriterAction` instance with its own prompt, so you have full control over how the AI responds for each specific context.
+If any of the context fields are empty when the button is clicked, the action shows a warning notification listing the missing fields and does not generate.
 
-## API
+```php
+use Filament\Forms\Components\TextInput;
+
+TextInput::make('slug')
+    ->hintAction(
+        AiWriterAction::make('ai_slug')
+            ->targetField('slug')
+            ->contextFields(['title'])
+            ->prompt('
+                Generate a URL-friendly slug based on the provided title.
+                Return ONLY the slug, lowercase, hyphenated, no special characters.
+            ')
+            ->silent()
+    ),
+```
+
+### Silent mode with a select field
+
+Use `->valueMap()` when the target field is a select or radio. Pass the same `id => name` map used in `->options()`. The AI receives the available options as context and returns the key of the chosen option.
+
+```php
+use Filament\Forms\Components\Select;
+
+$categories = Category::all()->pluck('name', 'id');
+
+Select::make('category_id')
+    ->label('Category')
+    ->options($categories)
+    ->hintAction(
+        AiWriterAction::make('ai_category')
+            ->targetField('category_id')
+            ->contextFields(['title', 'body'])
+            ->valueMap($categories->toArray())
+            ->prompt('
+                Based on the title and body, choose the most appropriate category.
+                Return ONLY the numeric ID of the chosen category, nothing else.
+            ')
+            ->silent()
+    ),
+```
+
+### Silent mode with tags or multi-select
+
+Use `->allowedValues()` when the target field is a tags input or multi-select. The AI receives the list of allowed values and must return a JSON array containing only values from that list. Values not present in the list are filtered out before injection.
+
+```php
+use Filament\Forms\Components\TagsInput;
+
+TagsInput::make('tags')
+    ->hintAction(
+        AiWriterAction::make('ai_tags')
+            ->targetField('tags')
+            ->contextFields(['title', 'body'])
+            ->allowedValues(['laravel', 'filament', 'php', 'api', 'frontend', 'backend'])
+            ->normalizeArrayCase()
+            ->prompt('
+                Suggest relevant tags based on the title and body.
+                Return ONLY a raw JSON array of strings from the allowed list, no markdown, no explanation.
+                Example: ["laravel","filament","php"]
+            ')
+            ->silent()
+    ),
+```
+
+When no `->allowedValues()` is provided but the target field still expects an array, use `->expectArray()`:
+
+```php
+TagsInput::make('tags')
+    ->hintAction(
+        AiWriterAction::make('ai_tags')
+            ->targetField('tags')
+            ->contextFields(['title', 'body'])
+            ->expectArray()
+            ->normalizeArrayCase()
+            ->prompt('
+                Suggest up to five relevant tags based on the title and body.
+                Return ONLY a raw JSON array of strings, no markdown, no explanation.
+                Example: ["laravel","filament","php"]
+            ')
+            ->silent()
+    ),
+```
+
+## API reference
 
 ### `AiWriterAction::make(?string $name = null): static`
 
-Creates a new action instance. The `$name` parameter defaults to `'ai_writer'`. If you attach more than one action to the same form, give each a unique name.
+Creates a new action instance. Defaults to `'ai_writer'`. If you attach more than one action to the same form, give each a unique name.
 
 ### `->targetField(string $field): static`
 
-The name of the form field where the generated text will be injected. Must match the field name passed to `make()` on the field component.
+The name of the form field where the generated text will be injected.
 
 ### `->prompt(string $prompt): static`
 
-The system prompt sent to the AI provider. Use this to define tone, format, length constraints, and any domain-specific instructions. The more specific the prompt, the better the output.
+The system prompt sent to the AI provider. Use this to define tone, format, length constraints, and domain-specific instructions. The more specific the prompt, the better the output.
+
+### `->contextFields(array $fields): static`
+
+An array of field names to read from the current form and pass to the AI as context. Used in silent mode.
+
+### `->silent(bool $condition = true): static`
+
+Enables silent mode. The action generates immediately on click with no modal, using `contextFields` as input.
+
+### `->valueMap(array $map): static`
+
+An `id => name` map for select or radio fields. The AI receives the options as context and returns a single key. Use this instead of `->allowedValues()` when the field expects a scalar value.
+
+### `->allowedValues(array $values): static`
+
+A flat array of allowed values for tags inputs or multi-selects. The AI must return a JSON array containing only values from this list. Values not present in the list are filtered out before injection.
+
+### `->expectArray(bool $condition = true): static`
+
+Tells the action to parse the AI response as an array even when no `->allowedValues()` is defined. Useful for free-form tags where any value is acceptable.
+
+### `->normalizeArrayCase(bool $condition = true): static`
+
+Converts all values in the generated array to lowercase before injection. Useful for tags to ensure consistent casing regardless of what the AI returns.
 
 ## Supported providers
 
-| Provider  | Default model                  | Environment variable  |
-|-----------|--------------------------------|-----------------------|
-| Anthropic | `claude-sonnet-4-20250514`     | `ANTHROPIC_API_KEY`   |
-| OpenAI    | `gpt-4o`                       | `OPENAI_API_KEY`      |
-| Gemini    | `gemini-3.1-flash-lite`        | `GEMINI_API_KEY`      |
+| Provider  | Default model              | Environment variable |
+|-----------|----------------------------|----------------------|
+| Anthropic | `claude-sonnet-4-20250514` | `ANTHROPIC_API_KEY`  |
+| OpenAI    | `gpt-4o`                   | `OPENAI_API_KEY`     |
+| Gemini    | `gemini-3.1-flash-lite`    | `GEMINI_API_KEY`     |
 
 ## Package structure
 
 ```
 src/
   Actions/
-    AiWriterAction.php          # The Filament Action
+    AiWriterAction.php                  # The Filament Action
   Contracts/
-    AiProvider.php              # Interface for AI providers
+    AiProvider.php                      # Interface for AI providers
   Providers/
     AnthropicProvider.php
     OpenAiProvider.php
@@ -156,7 +245,7 @@ config/
 
 ## Extending with a custom provider
 
-If you want to use a different AI provider, implement the `AiProvider` contract and rebind it in your `AppServiceProvider`:
+Implement the `AiProvider` contract and rebind it in your `AppServiceProvider`:
 
 ```php
 use PdroLucas\FilamentAiWriter\Contracts\AiProvider;
@@ -167,11 +256,31 @@ public function register(): void
 }
 ```
 
-## Contributing
+## Local development
 
-Contributions are welcome! Feel free to open an issue or submit a pull request.
+To use this package in a local project without publishing to Packagist, add a path repository to your project's `composer.json`:
 
-Before contributing, please ensure your changes follow the existing code style and include any necessary updates to documentation.
+```json
+{
+    "repositories": [
+        {
+            "type": "path",
+            "url": "../filament-ai-writer"
+        }
+    ],
+    "require": {
+        "pdro-lucas/filament-ai-writer": "@dev"
+    }
+}
+```
+
+Then run:
+
+```bash
+composer require pdro-lucas/filament-ai-writer @dev
+```
+
+Composer will symlink the local package directory, so any changes you make to the package are reflected immediately in the project.
 
 ## License
 
