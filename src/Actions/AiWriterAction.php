@@ -241,7 +241,7 @@ class AiWriterAction extends Action
       return $basePrompt;
     }
 
-    return $basePrompt . '\n\nAdditional instructions:\n' . implode("\n", $instructions);
+    return $basePrompt . "\n\nAdditional instructions:\n" . implode("\n", $instructions);
   }
 
   /**

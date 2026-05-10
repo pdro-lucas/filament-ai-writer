@@ -10,14 +10,9 @@ class GeminiProvider implements AiProvider
   public function generate(string $systemPrompt, string $userInput): string
   {
     $config = config("filament-ai-writer.gemini");
-    $connectTimeout = (int) config("filament-ai-writer.connect_timeout", 10);
-    $timeout = (int) config("filament-ai-writer.timeout", 60);
-    $retryTimes = (int) config("filament-ai-writer.retry_times", 2);
-    $retrySleepMs = (int) config("filament-ai-writer.retry_sleep_ms", 500);
 
-    $response = Http::connectTimeout($connectTimeout)
-      ->timeout($timeout)
-      ->retry($retryTimes, $retrySleepMs)
+    $response = Http::connectTimeout(5)
+      ->timeout(30)
       ->post(
         "https://generativelanguage.googleapis.com/v1beta/models/{$config["model"]}:generateContent?key={$config["api_key"]}",
         [
