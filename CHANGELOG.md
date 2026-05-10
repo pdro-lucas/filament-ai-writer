@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.1](https://github.com/pdro-lucas/filament-ai-writer/compare/v0.5.0...v0.5.1) (2026-05-10)
+
+
+### Bug Fixes
+
+* replace max_tokens with max_completion_tokens for OpenAI ([de4e2a2](https://github.com/pdro-lucas/filament-ai-writer/commit/de4e2a2669cf3397a8634590d0d60968ece30de0))
+
 ## [0.5.0](https://github.com/pdro-lucas/filament-ai-writer/compare/v0.4.0...v0.5.0) (2026-05-10)
 
 
