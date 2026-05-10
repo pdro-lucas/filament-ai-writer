@@ -135,7 +135,7 @@ The system prompt sent to the AI provider. Use this to define tone, format, leng
 |-----------|--------------------------------|-----------------------|
 | Anthropic | `claude-sonnet-4-20250514`     | `ANTHROPIC_API_KEY`   |
 | OpenAI    | `gpt-4o`                       | `OPENAI_API_KEY`      |
-| Gemini    | `gemini-2.0-flash`             | `GEMINI_API_KEY`      |
+| Gemini    | `gemini-3.1-flash-lite`        | `GEMINI_API_KEY`      |
 
 ## Package structure
 
@@ -167,32 +167,12 @@ public function register(): void
 }
 ```
 
-## Local development
+## Contributing
 
-To use this package in a local project without publishing to Packagist, add a path repository to your project's `composer.json`:
+Contributions are welcome! Feel free to open an issue or submit a pull request.
 
-```json
-{
-    "repositories": [
-        {
-            "type": "path",
-            "url": "../filament-ai-writer"
-        }
-    ],
-    "require": {
-        "pdro-lucas/filament-ai-writer": "@dev"
-    }
-}
-```
-
-Then run:
-
-```bash
-composer require pdro-lucas/filament-ai-writer @dev
-```
-
-Composer will symlink the local package directory, so any changes you make to the package are reflected immediately in the project.
+Before contributing, please ensure your changes follow the existing code style and include any necessary updates to documentation.
 
 ## License
 
-MIT
+This project is open-sourced under the [MIT license](LICENSE.md).
