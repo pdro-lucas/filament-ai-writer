@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/pdro-lucas/filament-ai-writer/compare/v0.3.0...v0.3.1) (2026-05-10)
+
+
+### Documentation
+
+* add dynamic tags example and simplify local development wording ([d88eac6](https://github.com/pdro-lucas/filament-ai-writer/commit/d88eac6ce1997e8370511bddd82e86d99e443e17))
+
 ## [0.3.0](https://github.com/pdro-lucas/filament-ai-writer/compare/v0.2.0...v0.3.0) (2026-05-10)
 
 
