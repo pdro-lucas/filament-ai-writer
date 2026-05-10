@@ -2,12 +2,15 @@
 namespace PdroLucas\FilamentAiWriter\Actions;
 
 use Filament\Actions\Action;
+use Filament\Facades\Filament;
 use Filament\Forms\Components\Textarea;
 use Filament\Notifications\Notification;
 use Filament\Schemas\Components\Utilities\Set;
 use Filament\Schemas\Components\Utilities\Get;
+use Filament\Support\Colors\Color;
 use Illuminate\Support\Str;
 use PdroLucas\FilamentAiWriter\Contracts\AiProvider;
+use PdroLucas\FilamentAiWriter\Events\AiTextGenerated;
 
 class AiWriterAction extends Action
 {
@@ -20,12 +23,18 @@ class AiWriterAction extends Action
   protected array $allowedValues = [];
   protected array $valueMap = [];
 
+  /** @var callable|null */
+  protected $beforeGenerateCallback = null;
+
+  /** @var callable|null */
+  protected static $globalBeforeGenerateCallback = null;
+
   public static function make(?string $name = null): static
   {
     return parent::make($name ?? "ai_writer")
       ->label("")
       ->icon("heroicon-o-sparkles")
-      ->color("gray")
+      ->color(Color::Fuchsia)
       ->tooltip("Generate with AI");
   }
 
@@ -77,13 +86,34 @@ class AiWriterAction extends Action
     return $this;
   }
 
+  /**
+   * Register a callback to run before generation for this specific action instance.
+   * Return false to cancel generation.
+   */
+  public function beforeGenerate(callable $callback): static
+  {
+    $this->beforeGenerateCallback = $callback;
+    return $this;
+  }
+
+  /**
+   * Register a global callback to run before every generation across all action instances.
+   * Return false to cancel generation.
+   * Typically called in AppServiceProvider::boot().
+   */
+  public static function globalBeforeGenerate(callable $callback): void
+  {
+    static::$globalBeforeGenerateCallback = $callback;
+  }
+
   public function setUp(): void
   {
     parent::setUp();
 
     $this->modalHeading(fn() => $this->silent ? null : "Generate with AI")
       ->modalDescription(fn() => $this->silent ? null : "Describe what you want to write.")
-      ->modalSubmitActionLabel(fn() => $this->silent ? null : "Generate")
+      ->modalSubmitAction(fn($action) => $action->color("primary")->label($this->silent ? "" : "Generate"))
+      ->successNotification(null)
       ->form(function (): array {
         if ($this->silent) {
           return [];
@@ -99,6 +129,10 @@ class AiWriterAction extends Action
         ];
       })
       ->action(function (array $data, Get $get, Set $set): void {
+        if (!$this->runBeforeGenerateHooks()) {
+          return;
+        }
+
         if ($this->silent) {
           $this->runSilent($get, $set);
         } else {
@@ -106,15 +140,54 @@ class AiWriterAction extends Action
           $result = $provider->generate($this->aiPrompt, $data["ai_input"]);
 
           if ($this->expectArray) {
-            $set($this->targetField, $this->parseArrayResult($result, $this->normalizeArrayCase));
-            $this->sendSuccessNotification();
+            $parsed = $this->parseArrayResult($result, $this->normalizeArrayCase);
+
+            $set($this->targetField, $parsed);
+            $this->dispatchEvent($this->targetField, $result);
+            $this->notifyGenerationSuccess();
             return;
           }
 
           $set($this->targetField, trim($result));
-          $this->sendSuccessNotification();
+          $this->dispatchEvent($this->targetField, $result);
+          $this->notifyGenerationSuccess();
         }
       });
+  }
+
+  /**
+   * Runs the global hook first, then the instance hook.
+   * Returns false if any hook cancels the generation.
+   */
+  protected function runBeforeGenerateHooks(): bool
+  {
+    if (static::$globalBeforeGenerateCallback !== null) {
+      if ((static::$globalBeforeGenerateCallback)() === false) {
+        return false;
+      }
+    }
+
+    if ($this->beforeGenerateCallback !== null) {
+      if (($this->beforeGenerateCallback)() === false) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  protected function dispatchEvent(string $field, string $rawResult): void
+  {
+    $provider = config("filament-ai-writer.provider");
+    $model = config("filament-ai-writer.{$provider}.model");
+
+    AiTextGenerated::dispatch([
+      "user" => Filament::auth()->user(),
+      "field" => $field,
+      "provider" => $provider,
+      "model" => $model,
+      "result" => $rawResult,
+    ]);
   }
 
   protected function runSilent(Get $get, Set $set): void
@@ -125,6 +198,7 @@ class AiWriterAction extends Action
       Notification::make()
         ->warning()
         ->title("Missing context")
+        ->color("warning")
         ->body("Fill in the following fields first: " . implode(", ", $missingFields))
         ->send();
       return;
@@ -144,7 +218,8 @@ class AiWriterAction extends Action
 
       $result = trim($provider->generate($this->aiPrompt, "Context:\n{$context}{$mapHint}"));
       $set($this->targetField, $result);
-      $this->sendSuccessNotification();
+      $this->dispatchEvent($this->targetField, $result);
+      $this->notifyGenerationSuccess();
       return;
     }
 
@@ -154,21 +229,26 @@ class AiWriterAction extends Action
 
       $result = $provider->generate($this->aiPrompt, "Context:\n{$context}{$valuesHint}");
       $parsedValues = $this->parseArrayResult($result);
-      $set($this->targetField, $this->filterAllowedValues($parsedValues));
-      $this->sendSuccessNotification();
+      $filtered = $this->filterAllowedValues($parsedValues);
+      $set($this->targetField, $filtered);
+      $this->dispatchEvent($this->targetField, $result);
+      $this->notifyGenerationSuccess();
       return;
     }
 
     $result = $provider->generate($this->aiPrompt, "Context:\n{$context}");
 
     if ($this->expectArray) {
-      $set($this->targetField, $this->parseArrayResult($result, $this->normalizeArrayCase));
-      $this->sendSuccessNotification();
+      $parsed = $this->parseArrayResult($result, $this->normalizeArrayCase);
+      $set($this->targetField, $parsed);
+      $this->dispatchEvent($this->targetField, $result);
+      $this->notifyGenerationSuccess();
       return;
     }
 
     $set($this->targetField, trim($result));
-    $this->sendSuccessNotification();
+    $this->dispatchEvent($this->targetField, $result);
+    $this->notifyGenerationSuccess();
   }
 
   protected function parseArrayResult(string $result, bool $normalizeCase = false): array
@@ -182,7 +262,7 @@ class AiWriterAction extends Action
       return $this->normalizeArrayValues($decoded, $normalizeCase);
     }
 
-    $parts = preg_split("/[\n,;|]+/", $normalized) ?: [];
+    $parts = preg_split('/[\n,;|]+/', $normalized) ?: [];
 
     if (count($parts) === 1 && str_contains($parts[0], " ")) {
       $parts = preg_split("/\s+/", $parts[0]) ?: [];
@@ -251,8 +331,8 @@ class AiWriterAction extends Action
     return $result;
   }
 
-  protected function sendSuccessNotification(): void
+  protected function notifyGenerationSuccess(): void
   {
-    Notification::make()->success()->title("Generated successfully")->send();
+    Notification::make()->success()->title("Generated successfully")->color("success")->send();
   }
 }

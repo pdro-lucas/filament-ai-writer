@@ -2,6 +2,8 @@
 
 A reusable Filament Action that adds AI-powered text generation to any form field. Supports Anthropic Claude, OpenAI, and Google Gemini out of the box.
 
+> **Status: Beta** — This package is in active development. APIs may change and issues can occur.
+
 ## Requirements
 
 - PHP 8.1+
@@ -242,6 +244,90 @@ Tells the action to parse the AI response as an array even when no `->allowedVal
 
 Converts all values in the generated array to lowercase before injection. Useful for tags to ensure consistent casing regardless of what the AI returns.
 
+### `->beforeGenerate(callable $callback): static`
+
+Register a callback that runs before AI generation on this action instance. Return `false` to cancel generation. Useful for credit checks, permissions, or rate limiting.
+
+```php
+use Filament\Forms\Components\TextInput;
+
+TextInput::make('meta_description')
+    ->hintAction(
+        AiWriterAction::make()
+            ->targetField('meta_description')
+            ->beforeGenerate(function (): bool {
+                if (auth()->user()->credits <= 0) {
+                    return false;
+                }
+                return true;
+            })
+            ->prompt('Write a meta description.')
+    ),
+```
+
+### `AiWriterAction::globalBeforeGenerate(callable $callback): void`
+
+Register a global callback that runs before every AI generation across all action instances. Typically called in `AppServiceProvider::boot()`. The instance-level `->beforeGenerate()` runs after this global hook.
+
+```php
+// AppServiceProvider
+use PdroLucas\FilamentAiWriter\Actions\AiWriterAction;
+
+public function boot(): void
+{
+    AiWriterAction::globalBeforeGenerate(function (): bool {
+        if (auth()->user()->cannot('use-ai-writer')) {
+            Notification::make()
+                ->warning()
+                ->title('AI writing is not available')
+                ->send();
+            return false;
+        }
+        return true;
+    });
+}
+```
+
+### `AiTextGenerated` event
+
+Dispatched after every successful AI generation. The payload contains:
+
+| Key        | Description                                      |
+|------------|--------------------------------------------------|
+| `user`     | The authenticated user (or null)                 |
+| `field`    | The target field name                            |
+| `provider` | The AI provider name (e.g. `openai`)             |
+| `model`    | The model used for generation                    |
+| `result`   | The raw text returned by the provider            |
+
+Listen to this event to debit credits, log usage, or send notifications:
+
+```php
+// app/Providers/EventServiceProvider.php
+use PdroLucas\FilamentAiWriter\Events\AiTextGenerated;
+
+protected $listen = [
+    AiTextGenerated::class => [DebitUserCredits::class],
+];
+```
+
+```php
+// app/Listeners/DebitUserCredits.php
+class DebitUserCredits
+{
+    public function handle(AiTextGenerated $event): void
+    {
+        $user = $event->payload['user'];
+
+        if ($user === null) {
+            return;
+        }
+
+        $user->decrement('ai_credits');
+    }
+}
+```
+
 ## Supported providers
 
 | Provider  | Default model              | Environment variable |
@@ -258,6 +344,8 @@ src/
     AiWriterAction.php                  # The Filament Action
   Contracts/
     AiProvider.php                      # Interface for AI providers
+  Events/
+    AiTextGenerated.php                 # Event dispatched after generation
   Providers/
     AnthropicProvider.php
     OpenAiProvider.php
@@ -305,6 +393,17 @@ composer require pdro-lucas/filament-ai-writer @dev
 ```
 
 Composer will symlink the local package directory, so any changes you make to the package are reflected immediately in the project.
+
+## Contributing
+
+Contributions are welcome! Feel free to open an issue or submit a pull request.
+
+Before contributing, please ensure your changes follow the existing code style and include any necessary updates to documentation.
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feat/my-feature`)
+3. Commit your changes using [conventional commits](https://www.conventionalcommits.org/)
+4. Push to your fork and open a pull request
 
 ## License
 

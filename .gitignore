@@ -2,3 +2,4 @@
 /.env
 /.phpunit.*
 /composer.lock
+/.idea/
