@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.0](https://github.com/pdro-lucas/filament-ai-writer/compare/v0.2.0...v0.3.0) (2026-05-10)
+
+
+### Features
+
+* add silent mode with context fields, value map, allowed values, and array support ([bd2a475](https://github.com/pdro-lucas/filament-ai-writer/commit/bd2a475b04317b7a82a31dcdc6f5039ef1578591))
+
+
+### Documentation
+
+* update README with silent mode usage examples and full API reference ([52f1c29](https://github.com/pdro-lucas/filament-ai-writer/commit/52f1c295d38f256dc2de6e832a34394379cb425d))
+
 ## [0.2.0](https://github.com/pdro-lucas/filament-ai-writer/compare/v0.1.0...v0.2.0) (2026-05-10)
 
 
