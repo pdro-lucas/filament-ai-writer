@@ -2,6 +2,8 @@
 
 A reusable Filament Action that adds AI-powered text generation to any form field. Supports Anthropic Claude, OpenAI, and Google Gemini out of the box.
 
+> **Status: Beta** — This package is in active development. APIs may change and issues can occur.
+
 ## Requirements
 
 - PHP 8.1+
