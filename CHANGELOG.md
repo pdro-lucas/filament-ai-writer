@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.5.0](https://github.com/pdro-lucas/filament-ai-writer/compare/v0.4.0...v0.5.0) (2026-05-10)
+
+
+### Features
+
+* add beforeGenerate hooks and AiTextGenerated event ([00089b9](https://github.com/pdro-lucas/filament-ai-writer/commit/00089b95d99e8df51e49714723c42c9aee3d365c))
+* add beforeGenerate hooks and AiTextGenerated event ([fc602ed](https://github.com/pdro-lucas/filament-ai-writer/commit/fc602ed584b3063286ba1a8fb7de6a70aba3c068))
+
+
+### Bug Fixes
+
+* resolve AiTextGenerated user via Filament guard ([22abfe0](https://github.com/pdro-lucas/filament-ai-writer/commit/22abfe073293eda95569b6e7f0f9f644833d94b5))
+
+
+### Miscellaneous
+
+* ignore .idea directory ([55209a6](https://github.com/pdro-lucas/filament-ai-writer/commit/55209a6ad9e9d6f899953c782d4921145cfbf6e9))
+
+
+### Documentation
+
+* add beforeGenerate hooks, AiTextGenerated event, and contributing section ([5c8df3a](https://github.com/pdro-lucas/filament-ai-writer/commit/5c8df3aafbacd9e20f82db74fbad4e2e26c1f251))
+* add beta status notice to README ([81b9033](https://github.com/pdro-lucas/filament-ai-writer/commit/81b9033b87cc8dd5fc4a4b4211420f385fc9d51e))
+* fix event listener registration example location ([4886513](https://github.com/pdro-lucas/filament-ai-writer/commit/4886513352dd2eb0cc91d756208f1cf6301fd7f1))
+* update example to handle unauthenticated cases ([8214db5](https://github.com/pdro-lucas/filament-ai-writer/commit/8214db53947c22b892ab57e06a3a235a3c5e8a69))
+
+
+### Code Refactoring
+
+* improve notification handling and update action color to fuchsia ([ff0740b](https://github.com/pdro-lucas/filament-ai-writer/commit/ff0740be4891bb0fe89461aa239d44707168c0bf))
+
 ## [0.4.0](https://github.com/pdro-lucas/filament-ai-writer/compare/v0.3.1...v0.4.0) (2026-05-10)
 
 
