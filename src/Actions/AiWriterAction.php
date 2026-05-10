@@ -2,6 +2,7 @@
 namespace PdroLucas\FilamentAiWriter\Actions;
 
 use Filament\Actions\Action;
+use Filament\Facades\Filament;
 use Filament\Forms\Components\Textarea;
 use Filament\Notifications\Notification;
 use Filament\Schemas\Components\Utilities\Set;
@@ -181,7 +182,7 @@ class AiWriterAction extends Action
     $model = config("filament-ai-writer.{$provider}.model");
 
     AiTextGenerated::dispatch([
-      "user" => auth()->guard()->user(),
+      "user" => Filament::auth()->user(),
       "field" => $field,
       "provider" => $provider,
       "model" => $model,
