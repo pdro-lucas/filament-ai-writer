@@ -37,6 +37,10 @@ To switch providers or customize the model, add the following variables:
 AI_WRITER_PROVIDER=anthropic   # anthropic | openai | gemini
 AI_WRITER_MODEL=claude-sonnet-4-20250514
 AI_WRITER_MAX_TOKENS=2048
+AI_WRITER_CONNECT_TIMEOUT=10
+AI_WRITER_TIMEOUT=60
+AI_WRITER_RETRY_TIMES=2
+AI_WRITER_RETRY_SLEEP_MS=500
 ```
 
 If you need to customize the full configuration, publish the config file:
