@@ -17,4 +17,8 @@ return [
   ],
 
   "max_tokens" => env("AI_WRITER_MAX_TOKENS", 2048),
+  "connect_timeout" => env("AI_WRITER_CONNECT_TIMEOUT", 10),
+  "timeout" => env("AI_WRITER_TIMEOUT", 60),
+  "retry_times" => env("AI_WRITER_RETRY_TIMES", 2),
+  "retry_sleep_ms" => env("AI_WRITER_RETRY_SLEEP_MS", 500),
 ];
