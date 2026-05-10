@@ -6,6 +6,7 @@ use Filament\Forms\Components\Textarea;
 use Filament\Notifications\Notification;
 use Filament\Schemas\Components\Utilities\Set;
 use Filament\Schemas\Components\Utilities\Get;
+use Filament\Support\Colors\Color;
 use Illuminate\Support\Str;
 use PdroLucas\FilamentAiWriter\Contracts\AiProvider;
 
@@ -25,7 +26,7 @@ class AiWriterAction extends Action
     return parent::make($name ?? "ai_writer")
       ->label("")
       ->icon("heroicon-o-sparkles")
-      ->color("gray")
+      ->color(Color::Fuchsia)
       ->tooltip("Generate with AI");
   }
 
@@ -84,6 +85,7 @@ class AiWriterAction extends Action
     $this->modalHeading(fn() => $this->silent ? null : "Generate with AI")
       ->modalDescription(fn() => $this->silent ? null : "Describe what you want to write.")
       ->modalSubmitActionLabel(fn() => $this->silent ? null : "Generate")
+      ->successNotification(null)
       ->form(function (): array {
         if ($this->silent) {
           return [];
@@ -107,12 +109,12 @@ class AiWriterAction extends Action
 
           if ($this->expectArray) {
             $set($this->targetField, $this->parseArrayResult($result, $this->normalizeArrayCase));
-            $this->sendSuccessNotification();
+            $this->notifyGenerationSuccess();
             return;
           }
 
           $set($this->targetField, trim($result));
-          $this->sendSuccessNotification();
+          $this->notifyGenerationSuccess();
         }
       });
   }
@@ -125,6 +127,7 @@ class AiWriterAction extends Action
       Notification::make()
         ->warning()
         ->title("Missing context")
+        ->color("warning")
         ->body("Fill in the following fields first: " . implode(", ", $missingFields))
         ->send();
       return;
@@ -144,10 +147,11 @@ class AiWriterAction extends Action
 
       $result = trim($provider->generate($this->aiPrompt, "Context:\n{$context}{$mapHint}"));
       $set($this->targetField, $result);
-      $this->sendSuccessNotification();
+      $this->notifyGenerationSuccess();
       return;
     }
 
+    // allowedValues: tags/multi-select — espera um array JSON
     if (!empty($this->allowedValues)) {
       $valuesHint =
         "\n\nYou MUST return only values from this list, as a JSON array:\n" . json_encode($this->allowedValues);
@@ -155,20 +159,21 @@ class AiWriterAction extends Action
       $result = $provider->generate($this->aiPrompt, "Context:\n{$context}{$valuesHint}");
       $parsedValues = $this->parseArrayResult($result);
       $set($this->targetField, $this->filterAllowedValues($parsedValues));
-      $this->sendSuccessNotification();
+      $this->notifyGenerationSuccess();
       return;
     }
 
+    // Texto livre — slug, meta description, etc.
     $result = $provider->generate($this->aiPrompt, "Context:\n{$context}");
 
     if ($this->expectArray) {
       $set($this->targetField, $this->parseArrayResult($result, $this->normalizeArrayCase));
-      $this->sendSuccessNotification();
+      $this->notifyGenerationSuccess();
       return;
     }
 
     $set($this->targetField, trim($result));
-    $this->sendSuccessNotification();
+    $this->notifyGenerationSuccess();
   }
 
   protected function parseArrayResult(string $result, bool $normalizeCase = false): array
@@ -251,8 +256,8 @@ class AiWriterAction extends Action
     return $result;
   }
 
-  protected function sendSuccessNotification(): void
+  protected function notifyGenerationSuccess(): void
   {
-    Notification::make()->success()->title("Generated successfully")->send();
+    Notification::make()->success()->title("Generated successfully")->color("success")->send();
   }
 }
