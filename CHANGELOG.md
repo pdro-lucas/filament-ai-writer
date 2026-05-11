@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.2](https://github.com/pdro-lucas/filament-ai-writer/compare/v0.6.1...v0.6.2) (2026-05-11)
+
+
+### Miscellaneous
+
+* **deps:** update filament/filament requirement || ^5.0 ([a115e84](https://github.com/pdro-lucas/filament-ai-writer/commit/a115e84c53ec37adacbd77ed61d5a8c5defe1af1))
+* **deps:** update filament/filament requirement from ^4.0 to ^4.0 || ^5.0 ([bdc0773](https://github.com/pdro-lucas/filament-ai-writer/commit/bdc0773441064ea149c88f142cd8b91277cacbfb))
+
 ## [0.6.1](https://github.com/pdro-lucas/filament-ai-writer/compare/v0.6.0...v0.6.1) (2026-05-11)
 
 
