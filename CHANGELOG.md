@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.1](https://github.com/pdro-lucas/filament-ai-writer/compare/v0.6.0...v0.6.1) (2026-05-11)
+
+
+### Documentation
+
+* add demonstration video ([80e2164](https://github.com/pdro-lucas/filament-ai-writer/commit/80e2164e89595e4398188cde8ad3ed522ef36741))
+
 ## [0.6.0](https://github.com/pdro-lucas/filament-ai-writer/compare/v0.5.1...v0.6.0) (2026-05-10)
 
 
