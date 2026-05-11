@@ -1,5 +1,8 @@
 # filament-ai-writer
 
+https://github.com/user-attachments/assets/05b8f24e-e01e-4acc-836a-32acda143b42
+
+
 A reusable Filament Action that adds AI-powered text generation to any form field. Supports Anthropic Claude, OpenAI, and Google Gemini out of the box.
 
 > **Status: Beta** — This package is in active development. APIs may change and issues can occur.
