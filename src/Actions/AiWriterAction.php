@@ -203,7 +203,7 @@ class AiWriterAction extends Action
           if ($this->silent) {
             $this->runSilent($get, $set);
           } else {
-            $this->generateAndDeliver($this->buildPromptWithControls($this->aiPrompt, $data), $data["ai_input"], $set);
+            $this->generateAndDeliver($this->buildPromptWithControls($this->aiPrompt, $data), $data["ai_input"], $get, $set);
           }
         } catch (GenerationFailure $failure) {
           Notification::make()->warning()->title("AI generation was not delivered")->body($failure->getMessage())->send();
@@ -298,8 +298,9 @@ class AiWriterAction extends Action
     ]);
   }
 
-  protected function generateAndDeliver(string $prompt, string $input, Set $set): void
+  protected function generateAndDeliver(string $prompt, string $input, Get $get, Set $set): void
   {
+    $original = $get($this->targetField);
     $result = AiWriterPlugin::get()->generation()->run($prompt, $input, function (GenerateResult $result) use ($set): void {
       $value = trim($result->text);
       if ($this->silent && !empty($this->valueMap)) {
@@ -315,7 +316,7 @@ class AiWriterAction extends Action
         throw new GenerationFailure('invalid_output', result: $result->withoutText());
       }
       $set($this->targetField, $value);
-    });
+    }, fn () => $set($this->targetField, $original), $this->targetField, actionName: $this->getName());
     $this->dispatchEvent($this->targetField, $result);
     $this->notifyGenerationSuccess();
   }
@@ -346,7 +347,7 @@ class AiWriterAction extends Action
     } elseif (!empty($this->allowedValues)) {
       $input .= "\n\nYou MUST return only values from this list, as a JSON array:\n" . json_encode($this->allowedValues);
     }
-    $this->generateAndDeliver($this->aiPrompt, $input, $set);
+    $this->generateAndDeliver($this->aiPrompt, $input, $get, $set);
   }
 
   protected function parseArrayResult(string $result, bool $normalizeCase = false): array

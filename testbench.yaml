@@ -10,6 +10,7 @@ env:
   APP_KEY: base64:MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
 
 migrations:
+  - database/migrations
   - workbench/database/migrations
 
 seeders:

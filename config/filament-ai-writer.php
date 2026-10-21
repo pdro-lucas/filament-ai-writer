@@ -1,5 +1,7 @@
 <?php
 return [
+  "tables" => ["usage" => "filament_ai_writer_usage"],
+  "pricing" => [],
   "provider" => env("AI_WRITER_PROVIDER", "openai"),
   "anthropic" => [
     "api_key" => env("ANTHROPIC_API_KEY"),

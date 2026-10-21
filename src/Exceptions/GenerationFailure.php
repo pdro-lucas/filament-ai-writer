@@ -19,6 +19,9 @@ final class GenerationFailure extends RuntimeException
     'refused' => 'The provider declined the request. The original field was preserved.',
     'incomplete' => 'The generated text was incomplete. The original field was preserved.',
     'invalid_output' => 'The generated result was not valid for this field. The original field was preserved.',
+    'transaction' => 'AI generation must run outside an existing database transaction so usage admission is durable.',
+    'storage' => 'Usage history is unavailable. Publish the filament-ai-writer-migrations and run migrations before generating. No unrecorded result was delivered.',
+    'duplicate' => 'This operation was already admitted. No new provider request was made.',
     'delivery' => 'The generated result could not be applied to the form.',
   ];
 
