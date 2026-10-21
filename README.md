@@ -9,9 +9,9 @@ A reusable Filament Action that adds AI-powered text generation to any form fiel
 
 ## Requirements
 
-- PHP 8.1+
-- Laravel 10, 11, or 12
-- Filament 4.x
+- PHP 8.2+
+- Laravel 11.28+ or 12.x
+- Filament 4.x (Livewire 3) or 5.x (Livewire 4)
 
 ## Installation
 
@@ -54,10 +54,46 @@ AI_WRITER_RETRY_SLEEP_MS=500
 If you need to customize the full configuration, publish the config file:
 
 ```bash
-php artisan vendor:publish --tag=filament-ai-writer-config
+php artisan vendor:publish --tag=filament-ai-writer
 ```
 
 This creates `config/filament-ai-writer.php` in your project where you can set per-provider models, API keys, and token limits. Publishing is optional — the package works with just the `.env` variables.
+
+## Panel plugin
+
+Register a separate instance in each panel's `PanelProvider`:
+
+```php
+use Illuminate\Contracts\Auth\Authenticatable;
+use Illuminate\Support\Facades\Gate;
+use PdroLucas\FilamentAiWriter\AiWriterPlugin;
+
+$panel->plugin(
+    AiWriterPlugin::make()
+        ->authorizeUseAiUsing(fn (Authenticatable $user, $panel): bool =>
+            Gate::forUser($user)->allows('use-ai-writer'))
+        ->authorizeViewStatisticsUsing(fn (Authenticatable $user, $panel): bool =>
+            Gate::forUser($user)->allows('view-ai-writer-statistics'))
+        ->authorizeManageUsing(fn (Authenticatable $user, $panel): bool =>
+            Gate::forUser($user)->allows('manage-ai-writer')),
+);
+```
+
+Callbacks receive the authenticated actor from that panel's guard and the panel itself. No User class, roles, columns or key type are required. Guests are denied. Authenticated actors may use AI by default; statistics and administration are denied unless their independent callbacks allow them. `AiWriterPlugin::get()` resolves the plugin on the current panel.
+
+The action enforces registration, the panel's use permission and any host action-level authorization on the server before running generation hooks or contacting the provider. Interactive and silent actions use the same checks. Permissions are checked again on later requests, including submission of a modal opened before permission was revoked. A host `->authorize(true)` cannot bypass plugin authorization; host action authorization can further restrict access.
+
+### Beta upgrade
+
+Registration is now required in **every panel** that uses `AiWriterAction`:
+
+```php
+$panel->plugin(AiWriterPlugin::make());
+```
+
+The Laravel ServiceProvider is still auto-discovered, but discovery does not register a panel plugin. Actions used without registration display configuration guidance and do not contact the provider. Remove temporary `authorize()` or `beforeGenerate()` callbacks whose only purpose was to duplicate plugin checks; keep application-specific restrictions and generation hooks. Actions outside a current Filament panel are no longer supported.
+
+No management screens, statistics storage or quotas are implemented in this foundation.
 
 ## Usage
 
@@ -390,29 +426,36 @@ public function register(): void
 
 ## Local development
 
-To use this package in a local project, add a path repository to your project's `composer.json`:
-
-```json
-{
-    "repositories": [
-        {
-            "type": "path",
-            "url": "../filament-ai-writer"
-        }
-    ],
-    "require": {
-        "pdro-lucas/filament-ai-writer": "@dev"
-    }
-}
-```
-
-Then run:
+The isolated Orchestra Testbench/Workbench demo uses Laravel 12, PHPUnit 11 and its own SQLite file. No host Laravel app, API key, Node build or paid API call is needed.
 
 ```bash
-composer require pdro-lucas/filament-ai-writer @dev
+composer install
+composer workbench:build
+composer serve
 ```
 
-Composer will symlink the local package directory, so any changes you make to the package are reflected immediately in the project.
+Open `http://127.0.0.1:8000/demo` and sign in with `demo@example.test` / `password`. Enter a topic and click **Generate demo text** next to **Generated text** for silent generation. For interactive generation, click **Open writing prompt** next to **Interactive text**, enter a request of at least 10 characters and click **Generate**. Both modes fill their respective fields with a fixed local response. The demo always overrides the provider and key with fake values and blocks unexpected Laravel HTTP requests. Its public demo app key and credentials are for local use only; `serve` binds to loopback.
+
+`workbench:build` migrates `workbench/database/database.sqlite`, seeds the demo user and publishes Filament assets. It is safe to repeat and does not reset the demo database. The package ServiceProvider never loads the demo providers in a consuming application.
+
+```bash
+composer test
+```
+
+Tests bootstrap with `WithWorkbench`, use a separate SQLite `:memory:` connection, and block unexpected HTTP calls. Tests must install their own `Http::fake()` responses; the demo response is not installed during unit tests. `tests/TestCase.php` is the shared base for subsequent coverage.
+
+To check the other supported major without changing the manifest:
+
+```bash
+composer update 'filament/*' livewire/livewire --with='filament/filament:^4.0' --with='livewire/livewire:^3.0' -W
+composer workbench:build
+composer test
+# Restore the default latest compatible major:
+composer update 'filament/*' livewire/livewire -W
+composer workbench:build
+```
+
+Stop the local server before switching dependency versions. Composer's lock file remains ignored according to the existing library convention.
 
 ## Contributing
 

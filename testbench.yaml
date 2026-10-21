@@ -1,0 +1,28 @@
+laravel: '@testbench'
+
+providers:
+  - Workbench\App\Providers\WorkbenchServiceProvider
+  - Workbench\App\Providers\DemoPanelProvider
+
+env:
+  APP_ENV: local
+  APP_NAME: AI Writer Workbench
+  APP_KEY: base64:MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
+
+migrations:
+  - workbench/database/migrations
+
+seeders:
+  - Workbench\Database\Seeders\DatabaseSeeder
+
+workbench:
+  start: '/demo'
+  install: false
+  discovers:
+    views: true
+  build:
+    - create-sqlite-db
+    - migrate
+    - db:seed:
+        --class: Workbench\Database\Seeders\DatabaseSeeder
+    - filament:assets
