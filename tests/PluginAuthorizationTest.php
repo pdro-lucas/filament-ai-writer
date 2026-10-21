@@ -24,7 +24,8 @@ class PluginAuthorizationTest extends TestCase
   public function test_authenticated_actor_can_use_ai_but_management_is_denied_by_default(): void
   {
     $this->app['auth']->guard('workbench')->setUser(new GenericUser(['id' => 'writer:opaque-id']));
-    $plugin = AiWriterPlugin::get();
+    $panel = Panel::make()->id('default-permissions')->authGuard('workbench')->plugin(AiWriterPlugin::make());
+    $plugin = $panel->getPlugin('ai-writer');
 
     $this->assertTrue($plugin->canUseAi());
     $this->assertFalse($plugin->canViewStatistics());

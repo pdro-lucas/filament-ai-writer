@@ -96,7 +96,7 @@ class UsageLedgerTest extends TestCase
       $this->assertSame(0, DB::transactionLevel());
       $this->assertSame('pending', UsageAttempt::query()->sole()->status);
       $this->assertSame((string) $actor->getKey(), UsageAttempt::query()->sole()->actor_id);
-      Filament::setCurrentPanel(Filament::getPanel('isolated'));
+      Filament::setCurrentPanel(\Filament\Panel::make()->id('isolated')->authGuard('web'));
       return Http::response($this->response(), 200, ['x-request-id' => 'request-id']);
     });
     $service = AiWriterPlugin::get()->generation();
