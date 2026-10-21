@@ -4,6 +4,7 @@ namespace PdroLucas\FilamentAiWriter\Usage;
 
 use Carbon\CarbonImmutable;
 use Filament\Facades\Filament;
+use Filament\Models\Contracts\FilamentUser;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Validation\ValidationException;
 use PdroLucas\FilamentAiWriter\AiWriterPlugin;
@@ -16,7 +17,8 @@ class UsageStatistics
   {
     $panel = Filament::getCurrentPanel();
     $plugin = $panel?->hasPlugin('ai-writer') ? $panel->getPlugin('ai-writer') : null;
-    return $plugin instanceof AiWriterPlugin && $plugin->canViewStatistics();
+    return $plugin instanceof AiWriterPlugin && $plugin->canViewStatistics()
+      && (!($panel->auth()->user() instanceof FilamentUser) || $panel->auth()->user()->canAccessPanel($panel));
   }
 
   public function query(): Builder
@@ -26,9 +28,10 @@ class UsageStatistics
   }
 
   /** Always rescope a caller's filtered query before reading any summary rows. */
-  public function summary(Builder $filtered): array
+  public function summary(Builder $filtered, bool $includeCharts = false): array
   {
     $query = $this->query()->whereIn('id', (clone $filtered)->reorder()->select('id'));
+    $charts = $includeCharts ? $this->chartContext($query) : null;
     $measurements = ['input_tokens', 'output_tokens', 'duration_ms', 'local_duration_ms'];
     $summary = ['attempts' => 0, 'delivered' => 0, 'failed' => 0, 'active' => 0,
       'provider_cost' => '0.000000000000', 'estimated_cost' => '0.000000000000',
@@ -37,7 +40,10 @@ class UsageStatistics
       $summary[$measurement] = ['total' => '0', 'known' => 0, 'unknown' => 0];
     }
     // Chunked PHP string arithmetic avoids SQL NUMERIC/float affinity and bounded SUM overflow.
-    foreach ($query->select(['id', 'status', 'cost_usd', 'cost_source', ...$measurements])->toBase()->lazyById(500) as $row) {
+    foreach ($query->select(['id', 'status', 'cost_usd', 'cost_source', ...($includeCharts ? ['started_at', 'provider'] : []), ...$measurements])->toBase()->lazyById(500) as $row) {
+      if ($includeCharts) {
+        $this->countChartRow($charts, $row);
+      }
       $summary['attempts']++;
       if ($row->status === 'delivered') {
         $summary['delivered']++;
@@ -63,7 +69,152 @@ class UsageStatistics
         $summary['unknown_cost']++;
       }
     }
+    if ($includeCharts) {
+      $summary['charts'] = $this->finishCharts($charts);
+    }
     return $summary;
+  }
+
+  /** Shared filters for the page and independently authorized chart components. */
+  public function filteredQuery(array $filters): Builder
+  {
+    $query = $this->filterPeriod($this->query(), $filters['period'] ?? []);
+    foreach (['provider', 'model'] as $column) {
+      if (filled($value = $filters[$column]['value'] ?? null)) {
+        $query->where($column, $value);
+      }
+    }
+    $this->filterResult($query, $filters['status']['value'] ?? null);
+    if (filled($actor = $filters['actor']['value'] ?? null)) {
+      $this->filterActor($query, $actor);
+    }
+    return $query;
+  }
+
+  public function filterResult(Builder $query, ?string $result): Builder
+  {
+    return match ($result) {
+      null, '' => $query,
+      'active' => $query->whereIn('status', ['pending', 'received']),
+      'delivered', 'failed', 'pending', 'received' => $query->where('status', $result),
+      default => $query->whereRaw('1 = 0'),
+    };
+  }
+
+  /** Reuse only within this HTTP request, after fresh authorization on every read. */
+  public function dashboard(array $filters): array
+  {
+    $query = $this->filteredQuery($filters);
+    $key = 'ai-writer.dashboard.' . hash('sha256', serialize([
+      Filament::getCurrentPanel()->getId(), config('app.timezone'), $query->toSql(), $query->getBindings(),
+    ]));
+    if (! request()->attributes->has($key)) {
+      request()->attributes->set($key, $this->summary($query, includeCharts: true));
+    }
+    return request()->attributes->get($key);
+  }
+
+  /** Count-only charts: bounded date buckets and ten named providers plus an explicit remainder. */
+  public function charts(Builder $filtered): array
+  {
+    return $this->summary($filtered, includeCharts: true)['charts'];
+  }
+
+  private function chartContext(Builder $query): array
+  {
+    $range = (clone $query)->toBase()->selectRaw('MIN(started_at) as first_at, MAX(started_at) as last_at')->first();
+    $firstDay = $range->first_at === null ? null : $this->localDayNumber($range->first_at);
+    $lastDay = $range->last_at === null ? null : $this->localDayNumber($range->last_at);
+    $days = $firstDay === null ? 1 : max(1, (int) ceil(($lastDay - $firstDay + 1) / 59));
+    $charts = ['first_day' => $firstDay, 'last_day' => $lastDay, 'days' => $days, 'time' => [], 'providers' => [], 'top' => []];
+    $this->initializeTimeBuckets($charts);
+    $charts['top'] = (clone $query)->whereNotNull('provider')->reorder()->select('provider')
+      ->selectRaw('COUNT(*) as attempts')->groupBy('provider')->orderByDesc('attempts')->orderBy('provider')->limit(10)->pluck('provider')->all();
+    return $charts;
+  }
+
+  /** Use a timezone-independent calendar-day index to keep bucket boundaries stable when a scan expands. */
+  private function localDayNumber(string $timestamp): int
+  {
+    $local = CarbonImmutable::parse($timestamp, 'UTC')->setTimezone(config('app.timezone', 'UTC'));
+    return (int) (CarbonImmutable::createFromFormat('!Y-m-d', $local->format('Y-m-d'), 'UTC')->getTimestamp() / 86400);
+  }
+
+  private function localDate(int $day): CarbonImmutable
+  {
+    return CarbonImmutable::createFromFormat(
+      '!Y-m-d',
+      CarbonImmutable::createFromTimestampUTC($day * 86400)->format('Y-m-d'),
+      config('app.timezone', 'UTC'),
+    );
+  }
+
+  private function initializeTimeBuckets(array &$charts): void
+  {
+    if ($charts['first_day'] === null) {
+      return;
+    }
+    $firstBucket = (int) floor($charts['first_day'] / $charts['days']) * $charts['days'];
+    $lastBucket = (int) floor($charts['last_day'] / $charts['days']) * $charts['days'];
+    foreach ($charts['time'] as $bucket => &$row) {
+      $row['label'] = $this->timeBucketLabel($charts, (int) $bucket);
+    }
+    unset($row);
+    for ($bucket = $firstBucket; $bucket <= $lastBucket; $bucket += $charts['days']) {
+      if (isset($charts['time'][$bucket])) {
+        continue;
+      }
+      $charts['time'][$bucket] = [
+        'label' => $this->timeBucketLabel($charts, $bucket),
+        'delivered' => 0, 'failed' => 0, 'active' => 0,
+      ];
+    }
+    ksort($charts['time']);
+  }
+
+  private function timeBucketLabel(array $charts, int $bucket): string
+  {
+    $start = $this->localDate(max($bucket, $charts['first_day']));
+    $end = $this->localDate(min($bucket + $charts['days'] - 1, $charts['last_day']));
+    return $start->format('Y-m-d') . ($charts['days'] > 1 ? ' – ' . $end->format('Y-m-d') : '');
+  }
+
+  private function countChartRow(array &$charts, object $row): void
+  {
+    $day = $this->localDayNumber($row->started_at);
+    if ($charts['first_day'] === null || $day < $charts['first_day'] || $day > $charts['last_day']) {
+      $charts['first_day'] = $charts['first_day'] === null ? $day : min($charts['first_day'], $day);
+      $charts['last_day'] = $charts['last_day'] === null ? $day : max($charts['last_day'], $day);
+      $requiredDays = max(1, (int) ceil(($charts['last_day'] - $charts['first_day'] + 1) / 59));
+      $newDays = max($charts['days'], (int) ceil($requiredDays / $charts['days']) * $charts['days']);
+      if ($newDays !== $charts['days']) {
+        $rebinned = [];
+        foreach ($charts['time'] as $oldBucket => $counts) {
+          $newBucket = (int) floor($oldBucket / $newDays) * $newDays;
+          $rebinned[$newBucket] ??= ['label' => '', 'delivered' => 0, 'failed' => 0, 'active' => 0];
+          foreach (['delivered', 'failed', 'active'] as $outcome) {
+            $rebinned[$newBucket][$outcome] += $counts[$outcome];
+          }
+        }
+        $charts['time'] = $rebinned;
+        $charts['days'] = $newDays;
+      }
+      $this->initializeTimeBuckets($charts);
+    }
+    $bucket = (int) floor($day / $charts['days']) * $charts['days'];
+    $outcome = match ($row->status) { 'delivered' => 'delivered', 'failed' => 'failed', default => 'active' };
+    $charts['time'][$bucket][$outcome]++;
+    $key = $row->provider === null ? 'unknown' : (in_array($row->provider, $charts['top'], true) ? 'provider:' . $row->provider : 'other');
+    $charts['providers'][$key] ??= ['label' => match ($key) { 'unknown' => 'Unknown provider', 'other' => 'Other providers (outside top 10)', default => $row->provider }, 'delivered' => 0, 'failed' => 0, 'active' => 0];
+    $charts['providers'][$key][$outcome]++;
+  }
+
+  private function finishCharts(array $charts): array
+  {
+    ['providers' => $providers, 'time' => $time, 'days' => $days] = $charts;
+    ksort($time);
+    uasort($providers, fn (array $a, array $b): int => ($b['delivered'] + $b['failed'] + $b['active']) <=> ($a['delivered'] + $a['failed'] + $a['active']));
+    return ['time' => array_values($time), 'providers' => array_values($providers), 'bucket_days' => $days];
   }
 
   /** Bounded searchable options never inspect another panel or load a host User relationship. */

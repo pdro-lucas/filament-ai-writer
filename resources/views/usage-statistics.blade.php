@@ -1,22 +1,78 @@
 <x-filament-panels::page>
-    <x-filament::section heading="Current panel usage">
-        <p>Panel: {{ $panel }}. Dates use {{ $timezone }}. All actor metadata in this panel is included.</p>
-        <p>Totals follow the history filters and include only retained records. Costs are known subtotals, not a complete bill.</p>
-        <dl>
-            <dt>Attempts / delivered / failed / unresolved</dt>
-            <dd>{{ $summary['attempts'] }} / {{ $summary['delivered'] }} / {{ $summary['failed'] }} / {{ $summary['active'] }}</dd>
-            <dt>Provider-reported USD subtotal</dt>
-            <dd>{{ $summary['provider_cost'] }} ({{ $summary['provider_cost_count'] }} measured attempts)</dd>
-            <dt>Estimated USD subtotal</dt>
-            <dd>{{ $summary['estimated_cost'] }} ({{ $summary['estimated_cost_count'] }} estimated attempts)</dd>
-            <dt>Attempts with unavailable cost</dt>
-            <dd>{{ $summary['unknown_cost'] }}</dd>
-            @foreach (['input_tokens' => 'Input tokens', 'output_tokens' => 'Output tokens', 'duration_ms' => 'HTTP duration (ms)', 'local_duration_ms' => 'Local overhead (ms)'] as $key => $label)
-                <dt>{{ $label }} — known subtotal</dt>
-                <dd>{{ $summary[$key]['total'] }} ({{ $summary[$key]['known'] }} measured, {{ $summary[$key]['unknown'] }} unknown)</dd>
-            @endforeach
-        </dl>
-    </x-filament::section>
+    @php
+        $knownCost = $summary['provider_cost_count'] + $summary['estimated_cost_count'];
+        $cost = \PdroLucas\FilamentAiWriter\Support\Decimal::sum($summary['provider_cost'], $summary['estimated_cost']);
+        $tokens = \PdroLucas\FilamentAiWriter\Support\Decimal::addIntegers($summary['input_tokens']['total'], $summary['output_tokens']['total']);
+        $measuredTokens = $summary['input_tokens']['known'] + $summary['output_tokens']['known'];
+        $duration = $summary['duration_ms'];
+        $period = $filters['period'] ?? [];
+    @endphp
+    @include('filament-ai-writer::usage-styles')
+    <div class="ai-usage">
+        <div class="ai-usage-toolbar">
+            <span class="ai-usage-muted">{{ $period['from'] ?? 'All history' }} — {{ $period['until'] ?? 'Today' }} · {{ $timezone }}</span>
+            <div class="ai-usage-controls" aria-label="Usage filters">
+                @foreach ([1 => 'Today', 7 => '7 days', 30 => '30 days'] as $days => $label)
+                    <x-filament::button size="sm" color="gray" wire:click="setPeriod({{ $days }})">{{ $label }}</x-filament::button>
+                @endforeach
+                <x-filament::dropdown width="sm" placement="bottom-end">
+                    <x-slot name="trigger">
+                        <x-filament::button size="sm" color="gray" icon="heroicon-m-adjustments-horizontal">Filters / Custom range</x-filament::button>
+                    </x-slot>
+                    <div class="ai-usage-filter-form">
+                        {{ $this->getTableFiltersForm() }}
+                        <x-filament::button size="sm" color="gray" wire:click="resetUsageFilters">Reset filters</x-filament::button>
+                    </div>
+                </x-filament::dropdown>
+            </div>
+        </div>
 
-    {{ $this->table }}
+        <dl class="ai-usage-metrics" aria-label="Usage overview">
+            <div>
+                <dt>Requests</dt><dd class="ai-usage-value">{{ number_format($summary['attempts']) }}</dd>
+                <dd class="ai-usage-muted">{{ number_format($summary['delivered']) }} success · {{ number_format($summary['failed']) }} failure · {{ number_format($summary['active']) }} in progress</dd>
+            </div>
+            <div>
+                <dt>Tokens consumed</dt><dd class="ai-usage-value">{{ $measuredTokens ? $tokens : 'Unavailable' }}</dd>
+                <dd class="ai-usage-muted">Input + output{{ $measuredTokens < $summary['attempts'] * 2 ? ' · Partial' : '' }} · {{ $measuredTokens }}/{{ $summary['attempts'] * 2 }} counters measured</dd>
+            </div>
+            <div>
+                <dt>Costs <span class="ai-usage-muted">USD</span></dt><dd class="ai-usage-value">{{ $knownCost ? '$' . rtrim(rtrim($cost, '0'), '.') : 'Unavailable' }}</dd>
+                <dd class="ai-usage-muted">{{ $summary['unknown_cost'] && $knownCost ? 'Partial · ' : '' }}{{ $knownCost }}/{{ $summary['attempts'] }} known{{ $summary['estimated_cost_count'] ? ' · Includes estimates' : '' }}</dd>
+                <dd>
+                    <details class="ai-usage-coverage">
+                        <summary>Cost coverage</summary>
+                        <p class="ai-usage-muted">Reported: {{ $summary['provider_cost_count'] ? $summary['provider_cost'] . ' USD' : 'Unavailable' }} · Estimated: {{ $summary['estimated_cost_count'] ? $summary['estimated_cost'] . ' USD' : 'Unavailable' }}. {{ $summary['unknown_cost'] }} unavailable. Known costs only; retained plugin requests, not a complete bill.</p>
+                    </details>
+                </dd>
+            </div>
+            <div>
+                <dt>Average duration</dt><dd class="ai-usage-value">{{ $duration['known'] ? number_format((float) $duration['total'] / $duration['known'] / 1000, 2) . ' s' : 'Unavailable' }}</dd>
+                <dd class="ai-usage-muted">HTTP · {{ $duration['known'] }}/{{ $summary['attempts'] }} measured{{ $duration['unknown'] && $duration['known'] ? ' · Partial' : '' }}</dd>
+            </div>
+        </dl>
+
+        <div class="ai-usage-chart">
+            @livewire(\PdroLucas\FilamentAiWriter\Widgets\UsageCountChart::class, ['panelId' => $panel, 'sharedFilters' => $filters], key('usage-' . $panel . '-' . hash('sha256', json_encode($filters))))
+            <details class="ai-usage-chart-data">
+                <summary>Request counts</summary>
+                <div class="ai-usage-scroll" role="region" aria-label="Request counts by date" tabindex="0">
+                    <table class="ai-usage-data">
+                        <caption>{{ $summary['charts']['bucket_days'] }}-day buckets · {{ $timezone }}</caption>
+                        <thead><tr><th scope="col">Date</th><th scope="col">Requests</th></tr></thead>
+                        <tbody>
+                            @forelse ($summary['charts']['time'] as $row)
+                                <tr><th scope="row">{{ $row['label'] }}</th><td>{{ $row['delivered'] + $row['failed'] + $row['active'] }}</td></tr>
+                            @empty
+                                <tr><td colspan="2">No requests match these filters.</td></tr>
+                            @endforelse
+                        </tbody>
+                    </table>
+                </div>
+            </details>
+        </div>
+        <div class="ai-usage-history" role="region" aria-label="Request history">
+            {{ $this->table }}
+        </div>
+    </div>
 </x-filament-panels::page>

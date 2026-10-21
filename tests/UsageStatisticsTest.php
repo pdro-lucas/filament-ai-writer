@@ -24,6 +24,12 @@ class UsageStatisticsTest extends TestCase
     $this->row('other-panel', ['provider' => 'PRIVATE-provider', 'model' => 'PRIVATE-model', 'actor_id' => 'PRIVATE-actor', 'cost_usd' => '100.000000000000', 'cost_source' => 'provider']);
     $service = app(UsageStatistics::class);
     $summary = $service->summary(\PdroLucas\FilamentAiWriter\Models\UsageAttempt::query());
+    $charts = $service->charts(\PdroLucas\FilamentAiWriter\Models\UsageAttempt::query());
+    $this->assertSame([['label' => '2026-10-21', 'delivered' => 2, 'failed' => 1, 'active' => 1]], $charts['time']);
+    $this->assertSame([
+      ['label' => 'openai', 'delivered' => 2, 'failed' => 1, 'active' => 0],
+      ['label' => 'gemini', 'delivered' => 0, 'failed' => 0, 'active' => 1],
+    ], $charts['providers']);
     $this->assertSame(4, $summary['attempts']);
     $this->assertSame(2, $summary['delivered']);
     $this->assertSame(1, $summary['failed']);
@@ -40,8 +46,15 @@ class UsageStatisticsTest extends TestCase
     }
   }
 
+  protected function tearDown(): void
+  {
+    \Carbon\CarbonImmutable::setTestNow();
+    parent::tearDown();
+  }
+
   private function login(): void
   {
+    \Carbon\CarbonImmutable::setTestNow('2026-10-21 12:00:00 UTC');
     $this->seed(DatabaseSeeder::class);
     $this->actingAs(User::firstOrFail(), 'workbench');
     Filament::setCurrentPanel(Filament::getPanel('demo'));
@@ -68,17 +81,73 @@ class UsageStatisticsTest extends TestCase
       ->assertCanSeeTableRecords($records->clone()->whereIn('id', [$first, $second])->get())
       ->assertCanNotSeeTableRecords($records->clone()->whereKey($private)->get())
       ->assertDontSee('PRIVATE-model')
-      ->assertSee('0.100000000001')
-      ->filterTable('provider', 'openai')
+      ->assertSee('0.100000000001')->assertSee('Partial')
+      ->filterTable('status', 'delivered')
       ->assertCountTableRecords(1)
       ->assertCanSeeTableRecords($records->clone()->whereKey($first)->get())
       ->assertCanNotSeeTableRecords($records->clone()->whereKey($second)->get());
     $this->assertSame(1, AiWriterPlugin::get()->statistics()->summary($page->instance()->getFilteredTableQuery())['attempts']);
-    $page->filterTable('provider', 'PRIVATE-provider')->assertCountTableRecords(0);
-    $page->filterTable('provider', null)
+    $dashboard = AiWriterPlugin::get()->statistics()->dashboard($page->get('tableFilters'));
+    $this->assertSame(1, $dashboard['attempts']);
+    $this->assertSame('0.100000000001', $dashboard['provider_cost']);
+    $this->assertSame([['label' => 'openai', 'delivered' => 1, 'failed' => 0, 'active' => 0]], $dashboard['charts']['providers']);
+    $page->filterTable('actor', UsageStatistics::actorKey('HostActor', 'PRIVATE-actor'))->assertCountTableRecords(0);
+    $page->filterTable('status', null)
       ->filterTable('actor', UsageStatistics::actorKey('HostActor', 'another-actor'))
       ->assertCountTableRecords(1)
       ->assertCanSeeTableRecords($records->clone()->whereKey($first)->get());
+  }
+
+  public function test_shared_period_user_and_result_filters_include_both_in_progress_states(): void
+  {
+    $this->login();
+    config(['app.timezone' => 'America/Sao_Paulo']);
+    $this->row('demo', ['started_at' => '2026-10-15 02:59:59']);
+    $this->row('demo', ['started_at' => '2026-10-15 03:00:00', 'status' => 'pending']);
+    $this->row('demo', ['status' => 'received']);
+    $this->row('demo', ['actor_type' => 'DifferentActor', 'status' => 'pending']);
+    $this->row('demo', ['status' => 'failed']);
+    $page = \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\UsageStatisticsPage::class)->assertCountTableRecords(4);
+    $this->assertSame(['from' => '2026-10-15', 'until' => '2026-10-21'], $page->get('tableFilters')['period']);
+    $page->filterTable('status', 'active')
+      ->filterTable('actor', UsageStatistics::actorKey('HostActor', 'opaque-id'))->assertCountTableRecords(2);
+    $service = AiWriterPlugin::get()->statistics();
+    $summary = $service->dashboard($page->get('tableFilters'));
+    $this->assertSame(2, $summary['attempts']);
+    $this->assertSame(2, array_sum(array_column($summary['charts']['time'], 'active')));
+    $page->call('setPeriod', 1)->assertCountTableRecords(1);
+    $this->assertSame(1, $service->dashboard($page->get('tableFilters'))['attempts']);
+    $page->call('setPeriod', 30)->assertCountTableRecords(2);
+    $page->filterTable('period', ['from' => '2026-10-15', 'until' => '2026-10-15'])->assertCountTableRecords(1);
+    $this->assertSame(1, $service->dashboard($page->get('tableFilters'))['attempts']);
+    $page->call('resetUsageFilters')->assertCountTableRecords(4);
+    $page->set('tableFilters.provider.value', 'PRIVATE-provider')
+      ->set('tableFilters.model.value', 'PRIVATE-model')->assertCountTableRecords(4)
+      ->assertViewHas('summary', fn (array $summary): bool => $summary['attempts'] === 4);
+    $page->assertViewHas('filters', fn (array $filters): bool => !isset($filters['provider'], $filters['model']));
+    $this->assertSame(['from' => '2026-10-15', 'until' => '2026-10-21'], $page->get('tableFilters')['period']);
+  }
+
+  public function test_request_drawer_uses_panel_scoped_ids_and_preserves_historic_model_and_exact_cost(): void
+  {
+    $this->login();
+    $id = $this->row('demo', ['actor_id' => 'someone-else', 'model' => 'historic-actual-model', 'cost_usd' => '0.000000000001', 'cost_source' => 'estimated']);
+    $private = $this->row('other-panel', ['model' => 'PRIVATE-model']);
+    config(['filament-ai-writer.model' => 'new-configured-model']);
+    $page = \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\UsageStatisticsPage::class)
+      ->mountTableAction('details', $id)->assertActionMounted(\Filament\Actions\Testing\TestAction::make('details')->table($id));
+    // Livewire 4 returns the native drawer as an action-modals partial; v3 returns full HTML.
+    $detail = $page->html() . json_encode($page->effects['partials'] ?? []);
+    foreach (['historic-actual-model', '0.000000000001', 'Estimated', 'someone-else'] as $value) {
+      $this->assertStringContainsString($value, $detail);
+    }
+    $this->assertStringNotContainsString('PRIVATE-model', $detail);
+    $page->unmountTableAction()->mountTableAction('details', $private)
+      ->assertActionNotMounted()->assertDontSee('PRIVATE-model');
+    $page->mountTableAction('details', 'HostActor:someone-else')->assertActionNotMounted();
+    $page->mountTableAction('details', $id)->assertActionMounted(\Filament\Actions\Testing\TestAction::make('details')->table($id));
+    AiWriterPlugin::get()->authorizeViewStatisticsUsing(fn () => false);
+    $page->call('$refresh')->assertForbidden();
   }
 
   #[\PHPUnit\Framework\Attributes\DataProvider('readSurfaces')]
@@ -87,11 +156,14 @@ class UsageStatisticsTest extends TestCase
     $this->login();
     $service = AiWriterPlugin::get()->statistics();
     $query = $service->query();
+    $service->dashboard([]); // Cached data must not bypass a subsequent permission check.
     AiWriterPlugin::get()->authorizeViewStatisticsUsing(fn () => false);
     try {
       match ($surface) {
         'query' => $service->query()->get(),
         'summary' => $service->summary($query),
+        'charts' => $service->charts($query),
+        'dashboard' => $service->dashboard([]),
         'options' => $service->options('actor'),
         'label' => $service->optionLabel('model', 'private-model'),
       };
@@ -103,28 +175,36 @@ class UsageStatisticsTest extends TestCase
 
   public static function readSurfaces(): array
   {
-    return array_map(fn (string $surface): array => [$surface], ['query', 'summary', 'options', 'label']);
+    return array_map(fn (string $surface): array => [$surface], ['query', 'summary', 'charts', 'dashboard', 'options', 'label']);
   }
 
   #[\PHPUnit\Framework\Attributes\DataProvider('livewireChanges')]
   public function test_mounted_statistics_page_rechecks_permission_guard_and_panel_on_livewire_requests(string $change): void
   {
     $this->login();
-    $page = \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\UsageStatisticsPage::class);
+    $id = $this->row('demo');
+    $page = \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\UsageStatisticsPage::class)->mountTableAction('details', $id);
+    $chart = \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Widgets\UsageCountChart::class, ['panelId' => 'demo']);
     if ($change === 'guard') {
       auth('workbench')->logout();
       $this->actingAs(User::firstOrFail(), 'web');
+    } elseif ($change === 'panel-access') {
+      $actor = \Mockery::mock(User::class)->makePartial();
+      $actor->setRawAttributes(User::firstOrFail()->getAttributes());
+      $actor->shouldReceive('canAccessPanel')->andReturn(false);
+      $this->actingAs($actor, 'workbench');
     } elseif ($change === 'panel') {
       Filament::setCurrentPanel(\Filament\Panel::make()->id('another')->authGuard('workbench')->plugin(AiWriterPlugin::make()->authorizeViewStatisticsUsing(fn () => true)));
     } else {
       AiWriterPlugin::get()->authorizeViewStatisticsUsing(fn () => false);
     }
     $page->call('refresh')->assertForbidden();
+    $chart->call('updateChartData')->assertForbidden();
   }
 
   public static function livewireChanges(): array
   {
-    return [['permission'], ['guard'], ['panel']];
+    return [['permission'], ['guard'], ['panel'], ['panel-access']];
   }
 
   public function test_statistics_default_denial_and_missing_plugin_are_not_granted_by_login(): void
@@ -153,6 +233,7 @@ class UsageStatisticsTest extends TestCase
     $service = AiWriterPlugin::get()->statistics();
     $query = $service->filterPeriod($service->query(), ['from' => '2026-10-21', 'until' => '2026-10-21']);
     $this->assertSame(2, $query->count());
+    $this->assertSame([['label' => '2026-10-21', 'delivered' => 2, 'failed' => 0, 'active' => 0]], $service->charts($query)['time']);
     $this->assertNotContains($before, $query->pluck('id')->all());
     $this->assertNotContains($after, $query->pluck('id')->all());
     $this->assertContains($included, $query->pluck('id')->all());
@@ -198,6 +279,111 @@ class UsageStatisticsTest extends TestCase
     $this->assertCount(50, $service->options('actor'));
     $this->assertCount(1, $service->options('actor', 'actor-0500'));
     $this->assertNull($service->optionLabel('actor', UsageStatistics::actorKey('OtherActor', 'actor-0500')));
+  }
+
+  public function test_chart_buckets_and_provider_remainder_are_bounded_without_losing_filtered_attempts(): void
+  {
+    $this->login();
+    $this->row('demo', ['started_at' => '2020-01-01 00:00:00', 'provider' => null, 'status' => 'received']);
+    for ($i = 0; $i < 12; $i++) {
+      $this->row('demo', ['provider' => 'provider-' . $i, 'status' => 'failed']);
+    }
+    $this->row('private-panel', ['provider' => 'PRIVATE-provider']);
+    $service = AiWriterPlugin::get()->statistics();
+    $charts = $service->charts($service->query());
+    $this->assertLessThanOrEqual(60, count($charts['time']));
+    $this->assertCount(12, $charts['providers']);
+    foreach (['time', 'providers'] as $dimension) {
+      $this->assertSame(12, array_sum(array_column($charts[$dimension], 'failed')));
+      $this->assertSame(1, array_sum(array_column($charts[$dimension], 'active')));
+      $this->assertSame(0, array_sum(array_column($charts[$dimension], 'delivered')));
+    }
+    $this->assertSame('2020-01-01', substr($charts['time'][0]['label'], 0, 10));
+    $this->assertStringEndsWith('2026-10-21', $charts['time'][array_key_last($charts['time'])]['label']);
+    $this->assertSame(2, collect($charts['providers'])->firstWhere('label', 'Other providers (outside top 10)')['failed']);
+    $this->assertSame(1, collect($charts['providers'])->firstWhere('label', 'Unknown provider')['active']);
+    $query = $service->filteredQuery(['provider' => ['value' => 'provider-0'], 'status' => ['value' => 'failed']]);
+    $this->assertSame([['label' => '2026-10-21', 'delivered' => 0, 'failed' => 1, 'active' => 0]], $service->charts($query)['time']);
+    $this->assertSame([], $service->charts($service->filteredQuery(['provider' => ['value' => 'PRIVATE-provider']]))['time']);
+  }
+
+  public function test_chart_prepass_handles_a_new_match_inserted_after_an_empty_range_read(): void
+  {
+    $this->login();
+    $inserted = false;
+    DB::listen(function (\Illuminate\Database\Events\QueryExecuted $query) use (&$inserted): void {
+      if (!$inserted && str_contains(strtolower($query->sql), 'min(started_at)')) {
+        $inserted = true;
+        $this->row('demo', ['started_at' => '2026-10-21 12:00:00', 'provider' => 'openai', 'status' => 'delivered']);
+      }
+    });
+
+    $charts = AiWriterPlugin::get()->statistics()->charts(AiWriterPlugin::get()->statistics()->query());
+
+    $this->assertTrue($inserted, 'The matching row must be inserted after MIN/MAX and before the count scan.');
+    $this->assertSame([['label' => '2026-10-21', 'delivered' => 1, 'failed' => 0, 'active' => 0]], $charts['time']);
+    $this->assertSame([['label' => 'openai', 'delivered' => 1, 'failed' => 0, 'active' => 0]], $charts['providers']);
+  }
+
+  public function test_chart_prepass_initializes_buckets_for_rows_added_after_a_nonempty_range_read(): void
+  {
+    $this->login();
+    $this->row('demo', ['started_at' => '2026-10-20 12:00:00', 'provider' => 'openai', 'status' => 'delivered']);
+    $inserted = false;
+    DB::listen(function (\Illuminate\Database\Events\QueryExecuted $query) use (&$inserted): void {
+      if (!$inserted && str_contains(strtolower($query->sql), 'min(started_at)')) {
+        $inserted = true;
+        $this->row('demo', ['started_at' => '2026-10-21 12:00:00', 'provider' => 'gemini', 'status' => 'failed']);
+      }
+    });
+
+    $charts = AiWriterPlugin::get()->statistics()->charts(AiWriterPlugin::get()->statistics()->query());
+
+    $this->assertTrue($inserted);
+    $this->assertSame([
+      ['label' => '2026-10-20', 'delivered' => 1, 'failed' => 0, 'active' => 0],
+      ['label' => '2026-10-21', 'delivered' => 0, 'failed' => 1, 'active' => 0],
+    ], $charts['time']);
+    $this->assertSame(1, array_sum(array_column($charts['providers'], 'failed')));
+  }
+
+  public function test_chart_rebins_a_late_range_extension_without_losing_counts_or_exceeding_sixty_buckets(): void
+  {
+    $this->login();
+    $this->row('demo', ['started_at' => '2026-10-20 12:00:00', 'provider' => 'openai', 'status' => 'delivered']);
+    $this->row('demo', ['started_at' => '2026-10-21 12:00:00', 'provider' => 'gemini', 'status' => 'failed']);
+    $inserted = false;
+    DB::listen(function (\Illuminate\Database\Events\QueryExecuted $query) use (&$inserted): void {
+      if (!$inserted && str_contains(strtolower($query->sql), 'min(started_at)')) {
+        $inserted = true;
+        $this->row('demo', ['started_at' => '2035-01-01 12:00:00', 'provider' => 'anthropic', 'status' => 'received']);
+      }
+    });
+
+    $charts = AiWriterPlugin::get()->statistics()->charts(AiWriterPlugin::get()->statistics()->query());
+
+    $this->assertTrue($inserted);
+    $this->assertLessThanOrEqual(60, count($charts['time']));
+    $this->assertSame(1, array_sum(array_column($charts['time'], 'delivered')));
+    $this->assertSame(1, array_sum(array_column($charts['time'], 'failed')));
+    $this->assertSame(1, array_sum(array_column($charts['time'], 'active')));
+    $this->assertSame('2026-10-20', substr($charts['time'][0]['label'], 0, 10));
+    $this->assertSame('2035-01-01', substr($charts['time'][array_key_last($charts['time'])]['label'], -10));
+    $this->assertSame(3, array_sum(array_map(fn (array $row): int => $row['delivered'] + $row['failed'] + $row['active'], $charts['providers'])));
+  }
+
+  public function test_chart_context_and_filters_cannot_be_replaced_by_livewire_clients(): void
+  {
+    $this->login();
+    foreach (['panelId' => 'another-panel', 'sharedFilters' => ['provider' => ['value' => 'PRIVATE']]] as $property => $value) {
+      $chart = \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Widgets\UsageCountChart::class, ['panelId' => 'demo']);
+      try {
+        $chart->set($property, $value);
+        $this->fail('Chart context must remain server-controlled.');
+      } catch (\Livewire\Features\SupportLockedProperties\CannotUpdateLockedPropertyException) {
+        $this->addToAssertionCount(1);
+      }
+    }
   }
 
 }

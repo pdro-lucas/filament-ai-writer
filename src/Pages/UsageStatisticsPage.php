@@ -2,6 +2,8 @@
 
 namespace PdroLucas\FilamentAiWriter\Pages;
 
+use Carbon\CarbonImmutable;
+use Filament\Actions\Action;
 use Filament\Facades\Filament;
 use Filament\Forms\Components\DatePicker;
 use Filament\Pages\Page;
@@ -10,6 +12,7 @@ use Filament\Tables\Concerns\InteractsWithTable;
 use Filament\Tables\Contracts\HasTable;
 use Filament\Tables\Filters\Filter;
 use Filament\Tables\Filters\SelectFilter;
+use Filament\Tables\Enums\FiltersLayout;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
 use Livewire\Attributes\Locked;
@@ -63,39 +66,62 @@ class UsageStatisticsPage extends Page implements HasTable
       ->paginated([10, 25, 50])
       ->defaultPaginationPageOption(25)
       ->deferFilters(false)
+      ->heading('Requests')
+      ->filtersLayout(FiltersLayout::Hidden)
+      ->filtersFormColumns(1)
+      ->recordAction('details')
+      ->recordActions([
+        Action::make('details')->label('Details')->link()->slideOver()->modalWidth('2xl')
+          ->modalHeading('Request details')->modalSubmitAction(false)->modalCancelActionLabel('Close')
+          ->modalContent(fn (UsageAttempt $record) => view('filament-ai-writer::usage-attempt-details', [
+            // A record supplied by the action is never an authorization boundary.
+            'attempt' => $this->statistics()->query()->findOrFail($record->getKey()),
+            'timezone' => config('app.timezone', 'UTC'),
+          ])),
+      ])
       ->columns([
-        TextColumn::make('started_at')->label('Started')->dateTime('Y-m-d H:i:s', timezone: config('app.timezone'))->sortable(),
-        TextColumn::make('status')->badge(),
-        TextColumn::make('actor_id')->label('Actor')->formatStateUsing(fn (UsageAttempt $record): string => $record->actor_type . ' · ' . $record->actor_id)->wrap(),
-        TextColumn::make('provider')->placeholder('Unknown'),
-        TextColumn::make('model')->label('Returned model')->placeholder('Unknown')->wrap(),
-        TextColumn::make('field'),
-        TextColumn::make('input_tokens')->label('Input tokens')->placeholder('Unknown'),
-        TextColumn::make('output_tokens')->label('Output tokens')->placeholder('Unknown'),
-        TextColumn::make('cost_usd')->label('Cost (USD)')->placeholder('Unavailable'),
-        TextColumn::make('cost_source')->label('Cost source'),
-        TextColumn::make('duration_ms')->label('HTTP ms')->placeholder('Unknown'),
-        TextColumn::make('local_duration_ms')->label('Local ms')->placeholder('Unknown'),
-        TextColumn::make('failure_code')->label('Failure')->placeholder('—')->toggleable(),
-        TextColumn::make('outcome_unknown')->label('Outcome unknown')->formatStateUsing(fn (bool $state): string => $state ? 'Yes' : 'No')->toggleable(),
-        ...array_map(fn (string $column): TextColumn => TextColumn::make($column)->placeholder('Unknown')->toggleable(isToggledHiddenByDefault: true), [
-          'operation_id', 'attempt_number', 'action_name', 'requested_model', 'outcome', 'finish_reason',
-          'cached_input_tokens', 'cache_write_input_tokens', 'reasoning_output_tokens', 'request_id', 'response_id', 'http_status',
-          'input_rate_usd_per_million', 'output_rate_usd_per_million',
-        ]),
+        TextColumn::make('started_at')->label('Date / time')->dateTime('M j, H:i:s', timezone: config('app.timezone'))->sortable(),
+        TextColumn::make('actor_id')->label('User')->formatStateUsing(fn (UsageAttempt $record): string => $record->actor_id)
+          ->description(fn (UsageAttempt $record): string => class_basename($record->actor_type))->wrap(),
+        TextColumn::make('status')->label('Result')->badge()
+          ->formatStateUsing(fn (string $state): string => match ($state) { 'delivered' => 'Success', 'failed' => 'Failure', default => 'In progress' })
+          ->color(fn (string $state): string => match ($state) { 'delivered' => 'success', 'failed' => 'danger', default => 'warning' }),
+        TextColumn::make('input_tokens')->label('Input tokens')->placeholder('Unavailable')->alignEnd(),
+        TextColumn::make('output_tokens')->label('Output tokens')->placeholder('Unavailable')->alignEnd(),
+        TextColumn::make('cost_usd')->label('Cost · USD')->placeholder('Unavailable')->alignEnd()
+          ->formatStateUsing(fn (string $state): string => rtrim(rtrim($state, '0'), '.'))
+          ->description(fn (UsageAttempt $record): string => match ($record->cost_source) { 'provider' => 'Reported', 'estimated' => 'Estimated', default => 'Unavailable' }),
+        TextColumn::make('duration_ms')->label('Duration')->placeholder('Unavailable')->alignEnd()
+          ->formatStateUsing(fn (int $state): string => number_format($state / 1000, 2) . ' s'),
       ])
       ->filters([
         Filter::make('period')->schema([
-          DatePicker::make('from')->label('Started from'),
-          DatePicker::make('until')->label('Started through'),
+          DatePicker::make('from')->label('From')->default(fn (): string => CarbonImmutable::now(config('app.timezone'))->subDays(6)->toDateString()),
+          DatePicker::make('until')->label('Through')->default(fn (): string => CarbonImmutable::now(config('app.timezone'))->toDateString()),
         ])->query(fn (Builder $query, array $data): Builder => $this->statistics()->filterPeriod($query, $data)),
-        $this->metadataFilter('provider', 'Provider'),
-        $this->metadataFilter('model', 'Returned model'),
-        $this->metadataFilter('actor', 'Actor')
+        $this->metadataFilter('actor', 'User')
           ->query(fn (Builder $query, array $data): Builder => filled($data['value'] ?? null) ? $this->statistics()->filterActor($query, $data['value']) : $query),
-        SelectFilter::make('status')->options(['pending' => 'Pending', 'received' => 'Received', 'delivered' => 'Delivered', 'failed' => 'Failed']),
+        SelectFilter::make('status')->label('Result')->options(['delivered' => 'Success', 'failed' => 'Failure', 'active' => 'In progress'])
+          ->query(fn (Builder $query, array $data): Builder => $this->statistics()->filterResult($query, $data['value'] ?? null)),
       ])
       ->emptyStateHeading('No usage recorded for this panel and these filters');
+  }
+
+  public function setPeriod(int $days): void
+  {
+    $this->authorizeContext();
+    abort_unless(in_array($days, [1, 7, 30], true), 422);
+    $today = CarbonImmutable::now(config('app.timezone', 'UTC'));
+    $this->tableFilters['period'] = ['from' => $today->subDays($days - 1)->toDateString(), 'until' => $today->toDateString()];
+    $this->getTableFiltersForm()->fill($this->tableFilters);
+    $this->updatedTableFilters();
+  }
+
+  public function resetUsageFilters(): void
+  {
+    $this->authorizeContext();
+    $this->removeTableFilters();
+    $this->setPeriod(7);
   }
 
   public function getTableRecordsPerPage(): int
@@ -114,8 +140,11 @@ class UsageStatisticsPage extends Page implements HasTable
 
   protected function getViewData(): array
   {
+    // Only visible table filters may affect cards or the independently mounted chart.
+    $filters = array_intersect_key($this->tableFilters ?? [], array_flip(['period', 'actor', 'status']));
     return [
-      'summary' => $this->statistics()->summary($this->getFilteredTableQuery()),
+      'summary' => $this->statistics()->dashboard($filters),
+      'filters' => $filters,
       'panel' => $this->panelId,
       'timezone' => config('app.timezone', 'UTC'),
     ];
