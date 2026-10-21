@@ -10,7 +10,7 @@ use PdroLucas\FilamentAiWriter\Actions\AiWriterAction;
 use PdroLucas\FilamentAiWriter\AiWriterPlugin;
 use PdroLucas\FilamentAiWriter\Tests\Fixtures\ArrayWriterPage;
 use PHPUnit\Framework\Attributes\DataProvider;
-use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Foundation\Testing\DatabaseMigrations;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Event;
@@ -24,7 +24,7 @@ use Workbench\Database\Seeders\DatabaseSeeder;
 
 class WriterDemoTest extends TestCase
 {
-  use RefreshDatabase;
+  use DatabaseMigrations;
 
   public function test_generation_uses_the_tests_own_http_fake_and_an_isolated_database(): void
   {

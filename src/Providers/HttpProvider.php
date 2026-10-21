@@ -54,7 +54,10 @@ abstract class HttpProvider implements AiProvider
     } catch (RequestException $exception) {
       $response = $exception->response;
     } catch (ConnectionException) {
-      throw new GenerationFailure('connection', durationMs: self::elapsed($started), outcomeUnknown: true);
+      $duration = self::elapsed($started);
+      throw new GenerationFailure('connection', durationMs: $duration, outcomeUnknown: true, result: new GenerateResult(
+        provider: static::PROVIDER, requestedModel: $settings['model'], model: null, text: '', outcome: GenerateResult::EMPTY, durationMs: $duration,
+      ));
     }
     return ProviderResponse::normalize(static::PROVIDER, $settings['model'], $response, self::elapsed($started));
   }

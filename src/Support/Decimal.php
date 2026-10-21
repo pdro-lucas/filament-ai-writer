@@ -4,7 +4,7 @@ namespace PdroLucas\FilamentAiWriter\Support;
 
 final class Decimal
 {
-  /** Normalize USD to DECIMAL(24,12), rounding half-up without a float conversion. */
+  /** Normalize USD to twelve integer and twelve fractional digits, rounding half-up without a float conversion. */
   public static function normalize(string $value): ?string
   {
     if (strlen($value) > 128 || !preg_match('/^(\d+)(?:\.(\d+))?(?:[eE]([+-]?\d+))?$/D', $value, $parts)) {

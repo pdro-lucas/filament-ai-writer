@@ -19,7 +19,14 @@ A Filament plugin for AI-assisted writing, with per-panel registration, host-def
 composer require pdro-lucas/filament-ai-writer
 ```
 
-The service provider is auto-discovered by Laravel. No manual registration needed.
+The Laravel service provider is auto-discovered. Register the plugin explicitly in each panel and install its usage table before generating:
+
+```bash
+php artisan vendor:publish --tag=filament-ai-writer-migrations
+php artisan migrate
+```
+
+The package does not automatically run migrations. To customize the table name, publish the configuration and set `tables.usage` **before** running the migration; keep that name stable afterward. No changes to the host's user table are required.
 
 ## Configuration
 
@@ -55,7 +62,7 @@ If you need to customize the full configuration, publish the config file:
 php artisan vendor:publish --tag=filament-ai-writer
 ```
 
-This creates `config/filament-ai-writer.php` in your project where you can set per-provider models, API keys, and token limits. Publishing is optional — the package works with just the `.env` variables.
+This creates `config/filament-ai-writer.php` in your project where you can set per-provider models, API keys, and token limits. Publishing configuration is optional when using the default table name and no host tariffs; publishing/running the migration is required.
 
 ## Panel plugin
 
@@ -91,7 +98,7 @@ $panel->plugin(AiWriterPlugin::make());
 
 The Laravel ServiceProvider is still auto-discovered, but discovery does not register a panel plugin. Actions used without registration display configuration guidance and do not contact the provider. Remove temporary `authorize()` or `beforeGenerate()` callbacks whose only purpose was to duplicate plugin checks; keep application-specific restrictions and generation hooks. Actions outside a current Filament panel are no longer supported.
 
-No management screens, statistics storage or quotas are implemented in this foundation.
+The plugin now records metadata-only usage history. Statistics screens and retention arrive in subsequent layers; no quotas or administration screens are included.
 
 ## Usage
 
@@ -309,24 +316,7 @@ TextInput::make('meta_description')
 
 Register a global callback that runs before every AI generation across all action instances. Typically called in `AppServiceProvider::boot()`. The instance-level `->beforeGenerate()` runs after this global hook.
 
-```php
-// AppServiceProvider
-use PdroLucas\FilamentAiWriter\Actions\AiWriterAction;
-
-public function boot(): void
-{
-    AiWriterAction::globalBeforeGenerate(function (): bool {
-        if (auth()->user()->cannot('use-ai-writer')) {
-            Notification::make()
-                ->warning()
-                ->title('AI writing is not available')
-                ->send();
-            return false;
-        }
-        return true;
-    });
-}
-```
+Use the plugin permission callbacks for authorization; no manual authorization hook is required. Hooks can still veto generation for application-specific business rules before admission.
 
 ### `AiTextGenerated` event
 
@@ -406,17 +396,43 @@ return new GenerateResult(
 
 The immutable result holds visible text in memory, requested and returned models separately, inclusive input/output token totals, optional cache/read/write/reasoning details, response/request IDs, finish reason and HTTP duration in milliseconds. Unknown or inconsistent measurements remain `null`; cache and reasoning are already included in their totals and are not added again. A returned model that is absent stays unknown.
 
-`outcome` is `text`, `empty`, `refused` or `incomplete`. Only usable `text` is delivered. Empty, refused, malformed and truncated responses preserve the original field; invalid selections and empty parsed arrays also preserve it. No success event is emitted for those outcomes. Internal thought blocks are excluded. Available usage remains in the result or typed failure for subsequent usage recording; this provider migration does not yet add a history table.
+`outcome` is `text`, `empty`, `refused` or `incomplete`. Only usable `text` is delivered. Empty, refused, malformed and truncated responses preserve the original field; invalid selections and empty parsed arrays also preserve it. No success event is emitted for those outcomes. Internal thought blocks are excluded. Available usage is recorded even when the result cannot be delivered.
 
 Providers throw `GenerationFailure` for configuration, transport, protocol or upstream failures. It carries a local safe failure code, status, safe IDs, duration, outcome-unknown flag and an optional metadata-only result, with no chained raw exception. Custom providers must follow this contract and must not attach prompts, credentials, raw errors or response bodies. `AiTextGenerated` remains a delivery event with text in memory; it is not a durable usage recorder. Its model is now the returned model, possibly `null`, rather than a guessed configuration value.
 
-The plugin exposes `generation()->run($systemPrompt, $userInput, $deliver)` for form integrations. This shared service checks current-panel admission and owns provider execution; the delivery callback receives `GenerateResult`. `AiWriterAction` supplies its field conversion and assignment, keeping provider/domain logic out of the form component.
+The plugin exposes `generation()->run($systemPrompt, $userInput, $deliver, $restore, $field, $operationId = null, $actionName = null)` for server-side integrations. It checks current-panel admission and owns execution/persistence. `$deliver` receives `GenerateResult`; `$restore` must restore the captured original scalar/array value if delivery or final storage fails. `AiWriterAction` supplies both callbacks and field conversion automatically. Keep delivery callbacks limited to reversible local field mutation; external side effects cannot be rolled back by this service. Call generation outside any database transaction on the usage connection: admission must be committed before HTTP, and an existing transaction is rejected before contacting the provider.
 
 **Configuration and retry changes:** Anthropic and OpenRouter require an explicit nonblank model. OpenAI and Gemini use their documented package defaults when `AI_WRITER_MODEL` is absent or blank. Invalid nonblank models/provider names, keys or nonpositive timeout/token settings fail before HTTP. Anthropic uses `x-api-key` and Gemini uses `x-goog-api-key`, never a key in the URL. Each built-in adapter makes at most one POST and does not follow redirects or retry automatically, including timeouts, quota/authentication failures and 5xx responses. The former OpenRouter retry settings were removed. A new user submission is a new operation and may incur another provider charge; an ambiguous timeout is not proof of zero usage or cost.
 
-OpenRouter's `usage.cost` is normalized directly from its JSON numeric lexeme to a canonical USD string with twelve fractional digits and half-up rounding. It is not converted through a binary float or replaced by upstream/BYOK cost details. A reported zero is known zero; missing/invalid cost is unavailable. Costs represent OpenRouter account charges, not necessarily the complete external BYOK bill. Other providers' monetary cost is unavailable in this migration; explicit host tariff estimation belongs to the subsequent usage integration. No price, balance or tokenizer requests are added.
+OpenRouter's `usage.cost` is normalized directly from its JSON numeric lexeme to a canonical USD string with twelve fractional digits and half-up rounding. It is not converted through a binary float or replaced by upstream/BYOK cost details. A reported zero is known zero; missing/invalid cost is unavailable. Costs represent OpenRouter account charges, not necessarily the complete external BYOK bill. For other responses, cost remains unavailable unless the host configures a complete matching tariff as described below. No price, balance or tokenizer requests are added.
 
 Endpoint references: [OpenAI Chat](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create), [Anthropic Messages](https://platform.claude.com/docs/en/api/messages/create), [Gemini generateContent](https://ai.google.dev/api/generate-content), [OpenRouter usage](https://openrouter.ai/docs/cookbook/administration/usage-accounting).
+
+## Usage ledger and host tariffs
+
+Each admitted operation inserts a committed `pending` attempt before contacting a provider. The current panel, its guard's actor class and opaque string identifier, target field, action name and UTC start time are captured on the server. The first response freezes allowlisted metadata as `received`; successful local delivery finishes as `delivered`. Rejection, timeout, invalid output or delivery failure finishes as `failed` when storage is available. Provider HTTP duration and local processing overhead are recorded separately in milliseconds. No historical aggregate or remote balance/price/tokenizer lookup runs during generation.
+
+The ledger stores only identity/context and normalized measurements: no prompts, generated text, internal thoughts, credentials, raw response/error bodies or chained exceptions. A failure may have known tokens or cost even though no text was delivered. Missing measurements remain `null`; a known zero stays zero. Unknown-outcome timeouts are never treated as free. If storage fails before admission, HTTP is blocked. If storage fails after HTTP, the form is preserved/restored and no delivery success is emitted; an unresolved `pending` or `received` row may remain. It does not prove zero usage, and the plugin does not automatically retry or infer remote billing after a process crash.
+
+The unique operation UUID plus attempt number prevents repeated local processing from making a second HTTP call for that operation. Finalization is idempotent and bound to the captured identity/context. A host integration may retain and resupply its **server-owned** operation UUID; a duplicate is safely rejected, not replayed, because generated text is never stored. Ordinary new action submissions create new operation UUIDs and may incur another charge. This does not deduplicate independent clicks or claim remote idempotency. Only attempt 1 is currently used.
+
+Costs and tariff snapshots use canonical USD **TEXT** with twelve fractional digits, avoiding SQLite numeric-affinity rounding. To estimate a cost when none was reported, configure explicit string rates per million inclusive input/output tokens, keyed by the exact returned provider/model:
+
+```php
+// config/filament-ai-writer.php — example host tariff, not a current price quote
+'pricing' => [
+    'openai' => [
+        'my-returned-model' => [
+            'input_usd_per_million' => '2',
+            'output_usd_per_million' => '10',
+        ],
+    ],
+],
+```
+
+Both token totals, both valid string rates and the returned model must be known. Literal model identifiers containing `/` or `.` are supported. Requested aliases do not substitute for returned models. Provider-reported cost, including zero, takes precedence. Estimation multiplies inclusive totals once, rounds half-up only after summing both components, and records `estimated` plus the applied rate snapshot. Cache/reasoning details are not billed again. Missing, numeric/float, negative, overly precise or unmatched rates leave cost unavailable. Rates represent a host estimate of inclusive usage, not a promise to reproduce cache tier, reasoning tier or external BYOK billing. Historical estimates do not change when the configuration changes.
+
+No cleanup or deletion runs automatically. Retention and authorized current-panel statistics are separate subsequent layers; consuming `UsageAttempt` directly is a host server-side responsibility, not an authorized statistics API.
 
 ## Package structure
 
