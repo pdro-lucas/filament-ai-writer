@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.0](https://github.com/pdro-lucas/filament-ai-writer/compare/v0.6.2...v0.7.0) (2026-10-21)
+
+
+### Features
+
+* add OpenRouter provider ([#14](https://github.com/pdro-lucas/filament-ai-writer/issues/14)) ([a7c320e](https://github.com/pdro-lucas/filament-ai-writer/commit/a7c320e388e94983124e84d7623be849d3de2956))
+
 ## [0.6.2](https://github.com/pdro-lucas/filament-ai-writer/compare/v0.6.1...v0.6.2) (2026-05-11)
 
 
