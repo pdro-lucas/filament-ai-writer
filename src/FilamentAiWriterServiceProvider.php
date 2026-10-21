@@ -7,6 +7,7 @@ use PdroLucas\FilamentAiWriter\Contracts\AiProvider;
 use PdroLucas\FilamentAiWriter\Providers\AnthropicProvider;
 use PdroLucas\FilamentAiWriter\Providers\GeminiProvider;
 use PdroLucas\FilamentAiWriter\Providers\OpenAiProvider;
+use PdroLucas\FilamentAiWriter\Providers\OpenRouterProvider;
 
 class FilamentAiWriterServiceProvider extends ServiceProvider
 {
@@ -18,6 +19,7 @@ class FilamentAiWriterServiceProvider extends ServiceProvider
       return match (config("filament-ai-writer.provider")) {
         "openai" => new OpenAiProvider(),
         "gemini" => new GeminiProvider(),
+        "openrouter" => new OpenRouterProvider(),
         default => new AnthropicProvider(),
       };
     });
