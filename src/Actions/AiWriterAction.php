@@ -13,7 +13,8 @@ use Filament\Support\Colors\Color;
 use Illuminate\Support\Str;
 use LogicException;
 use PdroLucas\FilamentAiWriter\AiWriterPlugin;
-use PdroLucas\FilamentAiWriter\Contracts\AiProvider;
+use PdroLucas\FilamentAiWriter\Data\GenerateResult;
+use PdroLucas\FilamentAiWriter\Exceptions\GenerationFailure;
 use PdroLucas\FilamentAiWriter\Events\AiTextGenerated;
 
 class AiWriterAction extends Action
@@ -198,25 +199,14 @@ class AiWriterAction extends Action
           return;
         }
 
-        if ($this->silent) {
-          $this->runSilent($get, $set);
-        } else {
-          $provider = app(AiProvider::class);
-          $prompt = $this->buildPromptWithControls($this->aiPrompt, $data);
-          $result = $provider->generate($prompt, $data["ai_input"]);
-
-          if ($this->expectArray) {
-            $parsed = $this->parseArrayResult($result, $this->normalizeArrayCase);
-
-            $set($this->targetField, $parsed);
-            $this->dispatchEvent($this->targetField, $result);
-            $this->notifyGenerationSuccess();
-            return;
+        try {
+          if ($this->silent) {
+            $this->runSilent($get, $set);
+          } else {
+            $this->generateAndDeliver($this->buildPromptWithControls($this->aiPrompt, $data), $data["ai_input"], $set);
           }
-
-          $set($this->targetField, trim($result));
-          $this->dispatchEvent($this->targetField, $result);
-          $this->notifyGenerationSuccess();
+        } catch (GenerationFailure $failure) {
+          Notification::make()->warning()->title("AI generation was not delivered")->body($failure->getMessage())->send();
         }
       });
   }
@@ -297,18 +287,37 @@ class AiWriterAction extends Action
     return true;
   }
 
-  protected function dispatchEvent(string $field, string $rawResult): void
+  protected function dispatchEvent(string $field, GenerateResult $result): void
   {
-    $provider = config("filament-ai-writer.provider");
-    $model = config("filament-ai-writer.{$provider}.model");
-
     AiTextGenerated::dispatch([
       "user" => Filament::auth()->user(),
       "field" => $field,
-      "provider" => $provider,
-      "model" => $model,
-      "result" => $rawResult,
+      "provider" => $result->provider,
+      "model" => $result->model,
+      "result" => $result->text,
     ]);
+  }
+
+  protected function generateAndDeliver(string $prompt, string $input, Set $set): void
+  {
+    $result = AiWriterPlugin::get()->generation()->run($prompt, $input, function (GenerateResult $result) use ($set): void {
+      $value = trim($result->text);
+      if ($this->silent && !empty($this->valueMap)) {
+        if (!array_key_exists($value, $this->valueMap)) {
+          throw new GenerationFailure('invalid_output', result: $result->withoutText());
+        }
+      } elseif ($this->silent && !empty($this->allowedValues)) {
+        $value = $this->filterAllowedValues($this->parseArrayResult($result->text));
+      } elseif ($this->expectArray) {
+        $value = $this->parseArrayResult($result->text, $this->normalizeArrayCase);
+      }
+      if ($value === '' || $value === []) {
+        throw new GenerationFailure('invalid_output', result: $result->withoutText());
+      }
+      $set($this->targetField, $value);
+    });
+    $this->dispatchEvent($this->targetField, $result);
+    $this->notifyGenerationSuccess();
   }
 
   protected function runSilent(Get $get, Set $set): void
@@ -330,46 +339,14 @@ class AiWriterAction extends Action
       ->map(fn($value, $field) => "{$field}: {$value}")
       ->join("\n");
 
-    $provider = app(AiProvider::class);
-
+    $input = "Context:\n{$context}";
     if (!empty($this->valueMap)) {
-      $mapHint =
-        "\n\nAvailable options (return ONLY the key, nothing else):\n" .
+      $input .= "\n\nAvailable options (return ONLY the key, nothing else):\n" .
         collect($this->valueMap)->map(fn($name, $id) => "{$id}: {$name}")->join("\n");
-
-      $result = trim($provider->generate($this->aiPrompt, "Context:\n{$context}{$mapHint}"));
-      $set($this->targetField, $result);
-      $this->dispatchEvent($this->targetField, $result);
-      $this->notifyGenerationSuccess();
-      return;
+    } elseif (!empty($this->allowedValues)) {
+      $input .= "\n\nYou MUST return only values from this list, as a JSON array:\n" . json_encode($this->allowedValues);
     }
-
-    if (!empty($this->allowedValues)) {
-      $valuesHint =
-        "\n\nYou MUST return only values from this list, as a JSON array:\n" . json_encode($this->allowedValues);
-
-      $result = $provider->generate($this->aiPrompt, "Context:\n{$context}{$valuesHint}");
-      $parsedValues = $this->parseArrayResult($result);
-      $filtered = $this->filterAllowedValues($parsedValues);
-      $set($this->targetField, $filtered);
-      $this->dispatchEvent($this->targetField, $result);
-      $this->notifyGenerationSuccess();
-      return;
-    }
-
-    $result = $provider->generate($this->aiPrompt, "Context:\n{$context}");
-
-    if ($this->expectArray) {
-      $parsed = $this->parseArrayResult($result, $this->normalizeArrayCase);
-      $set($this->targetField, $parsed);
-      $this->dispatchEvent($this->targetField, $result);
-      $this->notifyGenerationSuccess();
-      return;
-    }
-
-    $set($this->targetField, trim($result));
-    $this->dispatchEvent($this->targetField, $result);
-    $this->notifyGenerationSuccess();
+    $this->generateAndDeliver($this->aiPrompt, $input, $set);
   }
 
   protected function parseArrayResult(string $result, bool $normalizeCase = false): array

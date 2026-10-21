@@ -1,6 +1,6 @@
 {
   "name": "pdro-lucas/filament-ai-writer",
-  "description": "AI Writer Action for Filament Forms — supports OpenAI, Claude, Gemini and OpenRouter",
+  "description": "Filament AI writing plugin with per-panel permissions and shared provider generation",
   "type": "library",
   "license": "MIT",
   "keywords": [

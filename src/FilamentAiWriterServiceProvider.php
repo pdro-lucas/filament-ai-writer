@@ -3,6 +3,7 @@
 namespace PdroLucas\FilamentAiWriter;
 
 use Illuminate\Support\ServiceProvider;
+use PdroLucas\FilamentAiWriter\Exceptions\GenerationFailure;
 use PdroLucas\FilamentAiWriter\Contracts\AiProvider;
 use PdroLucas\FilamentAiWriter\Providers\AnthropicProvider;
 use PdroLucas\FilamentAiWriter\Providers\GeminiProvider;
@@ -20,7 +21,8 @@ class FilamentAiWriterServiceProvider extends ServiceProvider
         "openai" => new OpenAiProvider(),
         "gemini" => new GeminiProvider(),
         "openrouter" => new OpenRouterProvider(),
-        default => new AnthropicProvider(),
+        "anthropic" => new AnthropicProvider(),
+        default => throw new GenerationFailure("configuration"),
       };
     });
   }

@@ -43,7 +43,7 @@ class WorkbenchServiceProvider extends ServiceProvider
 
     Http::fake([
       'https://api.openai.com/v1/chat/completions' => Http::response([
-        'choices' => [['message' => ['content' => 'This text was generated locally by the Workbench HTTP fake.']]],
+        'choices' => [['message' => ['content' => 'This text was generated locally by the Workbench HTTP fake.'], 'finish_reason' => 'stop']],
       ]),
     ]);
   }

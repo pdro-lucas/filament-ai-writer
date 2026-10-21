@@ -7,6 +7,7 @@ use Filament\Contracts\Plugin;
 use Filament\Facades\Filament;
 use Filament\Panel;
 use LogicException;
+use PdroLucas\FilamentAiWriter\Generation\Generation;
 
 class AiWriterPlugin implements Plugin
 {
@@ -31,6 +32,11 @@ class AiWriterPlugin implements Plugin
     }
 
     return $plugin;
+  }
+
+  public function generation(): Generation
+  {
+    return app(Generation::class);
   }
 
   public function getId(): string

@@ -3,7 +3,7 @@
 https://github.com/user-attachments/assets/05b8f24e-e01e-4acc-836a-32acda143b42
 
 
-A reusable Filament Action that adds AI-powered text generation to any form field. Supports Anthropic Claude, OpenAI, Google Gemini, and OpenRouter out of the box.
+A Filament plugin for AI-assisted writing, with per-panel registration, host-defined permissions and a shared generation service. Its form action integrates OpenAI, Anthropic, Gemini and OpenRouter with scalar and array fields. Supported endpoints do not imply support for every model or optional API feature.
 
 > **Status: Beta** — This package is in active development. APIs may change and issues can occur.
 
@@ -26,10 +26,10 @@ The service provider is auto-discovered by Laravel. No manual registration neede
 Add your API key to `.env` depending on which provider you want to use:
 
 ```env
-# Anthropic (default)
+# Anthropic (requires an explicit AI_WRITER_MODEL)
 ANTHROPIC_API_KEY=sk-ant-...
 
-# OpenAI
+# OpenAI (default)
 OPENAI_API_KEY=sk-...
 
 # Google Gemini
@@ -42,13 +42,11 @@ OPENROUTER_API_KEY=sk-or-...
 To switch providers or customize the model, add the following variables:
 
 ```env
-AI_WRITER_PROVIDER=anthropic   # anthropic | openai | gemini | openrouter
-AI_WRITER_MODEL=claude-sonnet-4-20250514
+AI_WRITER_PROVIDER=openai   # anthropic | openai | gemini | openrouter
+AI_WRITER_MODEL=gpt-4o
 AI_WRITER_MAX_TOKENS=2048
 AI_WRITER_CONNECT_TIMEOUT=10
 AI_WRITER_TIMEOUT=60
-AI_WRITER_RETRY_TIMES=2
-AI_WRITER_RETRY_SLEEP_MS=500
 ```
 
 If you need to customize the full configuration, publish the config file:
@@ -374,7 +372,7 @@ class DebitUserCredits
 
 | Provider  | Default model              | Environment variable |
 |-----------|----------------------------|----------------------|
-| Anthropic | `claude-sonnet-4-20250514` | `ANTHROPIC_API_KEY`  |
+| Anthropic | none (set `AI_WRITER_MODEL`) | `ANTHROPIC_API_KEY`  |
 | OpenAI    | `gpt-4o`                   | `OPENAI_API_KEY`     |
 | Gemini    | `gemini-3.1-flash-lite`    | `GEMINI_API_KEY`     |
 | OpenRouter | none (set `AI_WRITER_MODEL`) | `OPENROUTER_API_KEY` |
@@ -389,7 +387,36 @@ OPENROUTER_API_KEY=sk-or-...
 AI_WRITER_MODEL=openai/gpt-4o-mini
 ```
 
-The provider sends your `app.url` and `app.name` as the `HTTP-Referer` and `X-Title` headers for OpenRouter attribution, and uses the `AI_WRITER_CONNECT_TIMEOUT`, `AI_WRITER_TIMEOUT`, `AI_WRITER_RETRY_TIMES` and `AI_WRITER_RETRY_SLEEP_MS` settings.
+The provider sends your `app.url` and `app.name` as the `HTTP-Referer` and `X-Title` headers for OpenRouter attribution. All four providers use `AI_WRITER_CONNECT_TIMEOUT` and `AI_WRITER_TIMEOUT`.
+
+### Provider results and beta interface upgrade
+
+Custom providers now implement `AiProvider::generate(string $systemPrompt, string $userInput): GenerateResult`, replacing the old string return. Rebind the same `AiProvider` contract in the host container; custom provider identifiers remain supported.
+
+```php
+use PdroLucas\FilamentAiWriter\Data\GenerateResult;
+
+return new GenerateResult(
+    provider: 'my-provider',
+    requestedModel: 'requested-model',
+    model: 'returned-model',
+    text: 'Generated text',
+);
+```
+
+The immutable result holds visible text in memory, requested and returned models separately, inclusive input/output token totals, optional cache/read/write/reasoning details, response/request IDs, finish reason and HTTP duration in milliseconds. Unknown or inconsistent measurements remain `null`; cache and reasoning are already included in their totals and are not added again. A returned model that is absent stays unknown.
+
+`outcome` is `text`, `empty`, `refused` or `incomplete`. Only usable `text` is delivered. Empty, refused, malformed and truncated responses preserve the original field; invalid selections and empty parsed arrays also preserve it. No success event is emitted for those outcomes. Internal thought blocks are excluded. Available usage remains in the result or typed failure for subsequent usage recording; this provider migration does not yet add a history table.
+
+Providers throw `GenerationFailure` for configuration, transport, protocol or upstream failures. It carries a local safe failure code, status, safe IDs, duration, outcome-unknown flag and an optional metadata-only result, with no chained raw exception. Custom providers must follow this contract and must not attach prompts, credentials, raw errors or response bodies. `AiTextGenerated` remains a delivery event with text in memory; it is not a durable usage recorder. Its model is now the returned model, possibly `null`, rather than a guessed configuration value.
+
+The plugin exposes `generation()->run($systemPrompt, $userInput, $deliver)` for form integrations. This shared service checks current-panel admission and owns provider execution; the delivery callback receives `GenerateResult`. `AiWriterAction` supplies its field conversion and assignment, keeping provider/domain logic out of the form component.
+
+**Configuration and retry changes:** Anthropic and OpenRouter require an explicit nonblank model. OpenAI and Gemini use their documented package defaults when `AI_WRITER_MODEL` is absent or blank. Invalid nonblank models/provider names, keys or nonpositive timeout/token settings fail before HTTP. Anthropic uses `x-api-key` and Gemini uses `x-goog-api-key`, never a key in the URL. Each built-in adapter makes at most one POST and does not follow redirects or retry automatically, including timeouts, quota/authentication failures and 5xx responses. The former OpenRouter retry settings were removed. A new user submission is a new operation and may incur another provider charge; an ambiguous timeout is not proof of zero usage or cost.
+
+OpenRouter's `usage.cost` is normalized directly from its JSON numeric lexeme to a canonical USD string with twelve fractional digits and half-up rounding. It is not converted through a binary float or replaced by upstream/BYOK cost details. A reported zero is known zero; missing/invalid cost is unavailable. Costs represent OpenRouter account charges, not necessarily the complete external BYOK bill. Other providers' monetary cost is unavailable in this migration; explicit host tariff estimation belongs to the subsequent usage integration. No price, balance or tokenizer requests are added.
+
+Endpoint references: [OpenAI Chat](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create), [Anthropic Messages](https://platform.claude.com/docs/en/api/messages/create), [Gemini generateContent](https://ai.google.dev/api/generate-content), [OpenRouter usage](https://openrouter.ai/docs/cookbook/administration/usage-accounting).
 
 ## Package structure
 
