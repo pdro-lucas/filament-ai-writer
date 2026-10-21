@@ -34,12 +34,15 @@ OPENAI_API_KEY=sk-...
 
 # Google Gemini
 GEMINI_API_KEY=...
+
+# OpenRouter
+OPENROUTER_API_KEY=sk-or-...
 ```
 
 To switch providers or customize the model, add the following variables:
 
 ```env
-AI_WRITER_PROVIDER=anthropic   # anthropic | openai | gemini
+AI_WRITER_PROVIDER=anthropic   # anthropic | openai | gemini | openrouter
 AI_WRITER_MODEL=claude-sonnet-4-20250514
 AI_WRITER_MAX_TOKENS=2048
 AI_WRITER_CONNECT_TIMEOUT=10
@@ -338,6 +341,19 @@ class DebitUserCredits
 | Anthropic | `claude-sonnet-4-20250514` | `ANTHROPIC_API_KEY`  |
 | OpenAI    | `gpt-4o`                   | `OPENAI_API_KEY`     |
 | Gemini    | `gemini-3.1-flash-lite`    | `GEMINI_API_KEY`     |
+| OpenRouter | none (set `AI_WRITER_MODEL`) | `OPENROUTER_API_KEY` |
+
+### OpenRouter
+
+OpenRouter gives access to many models through one OpenAI-compatible API. It has no default model, so set one explicitly:
+
+```env
+AI_WRITER_PROVIDER=openrouter
+OPENROUTER_API_KEY=sk-or-...
+AI_WRITER_MODEL=openai/gpt-4o-mini
+```
+
+The provider sends your `app.url` and `app.name` as the `HTTP-Referer` and `X-Title` headers for OpenRouter attribution, and uses the `AI_WRITER_CONNECT_TIMEOUT`, `AI_WRITER_TIMEOUT`, `AI_WRITER_RETRY_TIMES` and `AI_WRITER_RETRY_SLEEP_MS` settings.
 
 ## Package structure
 
@@ -353,6 +369,7 @@ src/
     AnthropicProvider.php
     OpenAiProvider.php
     GeminiProvider.php
+    OpenRouterProvider.php
   FilamentAiWriterServiceProvider.php
 config/
   filament-ai-writer.php
