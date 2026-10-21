@@ -11,6 +11,8 @@ use Filament\Schemas\Components\Utilities\Set;
 use Filament\Schemas\Components\Utilities\Get;
 use Filament\Support\Colors\Color;
 use Illuminate\Support\Str;
+use LogicException;
+use PdroLucas\FilamentAiWriter\AiWriterPlugin;
 use PdroLucas\FilamentAiWriter\Contracts\AiProvider;
 use PdroLucas\FilamentAiWriter\Events\AiTextGenerated;
 
@@ -188,6 +190,10 @@ class AiWriterAction extends Action
         return $fields;
       })
       ->action(function (array $data, Get $get, Set $set): void {
+        if (!$this->authorizeGeneration()) {
+          return;
+        }
+
         if (!$this->runBeforeGenerateHooks()) {
           return;
         }
@@ -213,6 +219,32 @@ class AiWriterAction extends Action
           $this->notifyGenerationSuccess();
         }
       });
+  }
+
+  protected function authorizeGeneration(): bool
+  {
+    try {
+      $plugin = AiWriterPlugin::get();
+    } catch (LogicException $exception) {
+      Notification::make()
+        ->danger()
+        ->title("AI Writer is not configured")
+        ->body($exception->getMessage())
+        ->send();
+
+      return false;
+    }
+
+    if (!$plugin->canUseAi() || !$this->isAuthorized()) {
+      Notification::make()
+        ->warning()
+        ->title("You are not authorized to use AI Writer")
+        ->send();
+
+      return false;
+    }
+
+    return true;
   }
 
   protected function buildPromptWithControls(string $basePrompt, array $data)
