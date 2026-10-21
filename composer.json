@@ -1,6 +1,6 @@
 {
   "name": "pdro-lucas/filament-ai-writer",
-  "description": "AI Writer Action for Filament Forms — supports OpenAI, Claude and Gemini",
+  "description": "AI Writer Action for Filament Forms — supports OpenAI, Claude, Gemini and OpenRouter",
   "type": "library",
   "license": "MIT",
   "keywords": [
@@ -9,7 +9,8 @@
     "laravel",
     "openai",
     "claude",
-    "gemini"
+    "gemini",
+    "openrouter"
   ],
   "authors": [
     {
