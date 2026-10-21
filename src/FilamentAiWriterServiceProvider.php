@@ -29,6 +29,8 @@ class FilamentAiWriterServiceProvider extends ServiceProvider
 
   public function boot(): void
   {
+    $this->loadViewsFrom(__DIR__ . "/../resources/views", "filament-ai-writer");
+
     $this->publishesMigrations([
       __DIR__ . "/../database/migrations/2026_10_21_000001_create_ai_writer_usage_table.php" => database_path("migrations/2026_10_21_000001_create_ai_writer_usage_table.php"),
     ], "filament-ai-writer-migrations");

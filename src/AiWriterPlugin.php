@@ -8,6 +8,8 @@ use Filament\Facades\Filament;
 use Filament\Panel;
 use LogicException;
 use PdroLucas\FilamentAiWriter\Generation\Generation;
+use PdroLucas\FilamentAiWriter\Usage\UsageStatistics;
+use PdroLucas\FilamentAiWriter\Pages\UsageStatisticsPage;
 
 class AiWriterPlugin implements Plugin
 {
@@ -39,6 +41,11 @@ class AiWriterPlugin implements Plugin
     return app(Generation::class);
   }
 
+  public function statistics(): UsageStatistics
+  {
+    return app(UsageStatistics::class);
+  }
+
   public function getId(): string
   {
     return 'ai-writer';
@@ -51,6 +58,7 @@ class AiWriterPlugin implements Plugin
     }
 
     $this->panel = $panel;
+    $panel->pages([UsageStatisticsPage::class]);
   }
 
   public function boot(Panel $panel): void {}

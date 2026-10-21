@@ -37,6 +37,25 @@ final class Decimal
     return $left === null || $right === null ? null : self::format(self::addDigits(str_replace('.', '', $left), str_replace('.', '', $right)));
   }
 
+  /** Add canonical USD subtotals without imposing the per-attempt amount limit. */
+  public static function sum(string $left, string $right): string
+  {
+    if (!preg_match('/^\d+\.\d{12}$/D', $left) || !preg_match('/^\d+\.\d{12}$/D', $right)) {
+      throw new \InvalidArgumentException('Subtotals must be canonical decimal strings.');
+    }
+    $scaled = self::addDigits(str_replace('.', '', $left), str_replace('.', '', $right));
+    $scaled = str_pad($scaled, 13, '0', STR_PAD_LEFT);
+    return substr($scaled, 0, -12) . '.' . substr($scaled, -12);
+  }
+
+  public static function addIntegers(string $left, string $right): string
+  {
+    if (!ctype_digit($left) || !ctype_digit($right)) {
+      throw new \InvalidArgumentException('Totals must be unsigned integer strings.');
+    }
+    return self::addDigits($left, $right);
+  }
+
   public static function estimate(int $input, int $output, string $inputRate, string $outputRate): ?string
   {
     if ($input < 0 || $output < 0 || !preg_match('/^\d+(?:\.\d{1,12})?$/D', $inputRate) || !preg_match('/^\d+(?:\.\d{1,12})?$/D', $outputRate)) {

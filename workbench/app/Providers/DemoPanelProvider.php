@@ -27,7 +27,7 @@ class DemoPanelProvider extends PanelProvider
       ->brandName('AI Writer Workbench')
       ->authGuard('workbench')
       ->login()
-      ->plugin(AiWriterPlugin::make())
+      ->plugin(AiWriterPlugin::make()->authorizeViewStatisticsUsing(fn () => true))
       ->pages([WriterDemo::class])
       ->middleware([
         EncryptCookies::class,

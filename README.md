@@ -98,7 +98,7 @@ $panel->plugin(AiWriterPlugin::make());
 
 The Laravel ServiceProvider is still auto-discovered, but discovery does not register a panel plugin. Actions used without registration display configuration guidance and do not contact the provider. Remove temporary `authorize()` or `beforeGenerate()` callbacks whose only purpose was to duplicate plugin checks; keep application-specific restrictions and generation hooks. Actions outside a current Filament panel are no longer supported.
 
-The plugin now records metadata-only usage history. Statistics screens and retention arrive in subsequent layers; no quotas or administration screens are included.
+The plugin now records metadata-only usage history. An authorized current-panel statistics page is registered by the plugin. Retention arrives in a subsequent layer; no quotas or administration screens are included.
 
 ## Usage
 
@@ -432,7 +432,21 @@ Costs and tariff snapshots use canonical USD **TEXT** with twelve fractional dig
 
 Both token totals, both valid string rates and the returned model must be known. Literal model identifiers containing `/` or `.` are supported. Requested aliases do not substitute for returned models. Provider-reported cost, including zero, takes precedence. Estimation multiplies inclusive totals once, rounds half-up only after summing both components, and records `estimated` plus the applied rate snapshot. Cache/reasoning details are not billed again. Missing, numeric/float, negative, overly precise or unmatched rates leave cost unavailable. Rates represent a host estimate of inclusive usage, not a promise to reproduce cache tier, reasoning tier or external BYOK billing. Historical estimates do not change when the configuration changes.
 
-No cleanup or deletion runs automatically. Retention and authorized current-panel statistics are separate subsequent layers; consuming `UsageAttempt` directly is a host server-side responsibility, not an authorized statistics API.
+No cleanup or deletion runs automatically. Retention is a separate subsequent layer. Use the plugin statistics service for authorized reporting; reading `UsageAttempt` directly remains a host server-side responsibility, not an authorized statistics API.
+
+## Current-panel statistics
+
+The plugin registers **AI Writer usage** at `/your-panel/ai-writer-usage`. Login alone does not grant access: configure `authorizeViewStatisticsUsing()` with the host's permission/policy callback. It is independent of AI use and administration permission, and uses the current panel's guard. Permission is checked for page access, every subsequent Livewire request, and each statistics query/aggregate/filter-option read. A mounted page rejects a changed panel context or revoked permission.
+
+The panel is fixed context, never a selectable cross-panel filter. An authorized viewer can inspect **all actors' metadata within the current panel**, not just their own calls. No cross-panel expansion/global view is exposed. Actor filters identify both actor class and opaque identifier, without joining a host User table or assuming names/roles/ID types.
+
+History is read-only and paginated (10/25/50 rows; values are also bounded server-side). Filter by local start-date period, actor, provider, returned model or status. Period boundaries use the application's timezone and convert to UTC for the stored timestamps; the end date includes the entire local calendar day. Searchable metadata options/selected labels are panel-scoped, with at most 50 search results. Table columns expose only the recorded metadata; optional columns include safe IDs, token details and tariff snapshots.
+
+Totals follow the same filters across all matching retained rows, independently of the visible page. They distinguish delivered, failed and unresolved attempts; inclusive input/output tokens; HTTP duration and local overhead; provider-reported and estimated USD subtotals; and the count of missing measurements. Known zero is included in measured coverage, while unknown never becomes measured zero. Empty/no-measurement selections display a zero **known subtotal** with zero measured coverage. Reported and estimated money remain separate; neither subtotal claims to be a complete bill.
+
+Aggregation reads chunks of 500 records and sums decimal/integer strings in PHP, without SQL monetary conversion, float rounding or per-attempt subtotal overflow. History uses panel/date/actor/provider/model indexes; report runtime still grows with matching retained history. No statistics aggregate runs during AI generation, and no provider price/balance/tokenizer call is added. A custom server-side integration may use `AiWriterPlugin::get()->statistics()->query()` and `summary($filteredQuery)`; summary freshly checks permission and constrains its outer query to the current panel even if given a broader query. These builders are server-side objects, not client-controlled panel selectors.
+
+Filament references: [custom pages](https://filamentphp.com/docs/5.x/navigation/custom-pages), [tables](https://filamentphp.com/docs/5.x/tables/overview).
 
 ## Package structure
 
@@ -477,7 +491,7 @@ composer workbench:build
 composer serve
 ```
 
-Open `http://127.0.0.1:8000/demo` and sign in with `demo@example.test` / `password`. Enter a topic and click **Generate demo text** next to **Generated text** for silent generation. For interactive generation, click **Open writing prompt** next to **Interactive text**, enter a request of at least 10 characters and click **Generate**. Both modes fill their respective fields with a fixed local response. The demo always overrides the provider and key with fake values and blocks unexpected Laravel HTTP requests. Its public demo app key and credentials are for local use only; `serve` binds to loopback.
+Open `http://127.0.0.1:8000/demo` and sign in with `demo@example.test` / `password`. Enter a topic and click **Generate demo text** next to **Generated text** for silent generation. For interactive generation, click **Open writing prompt** next to **Interactive text**, enter a request of at least 10 characters and click **Generate**. Both modes fill their respective fields with a fixed local response. The demo always overrides the provider and key with fake values and blocks unexpected Laravel HTTP requests. The demo explicitly grants its authenticated viewer statistics permission. Follow **View this panel's usage history** or open `/demo/ai-writer-usage` after generation. Normal generation records tokens with unavailable cost. Include `[demo:estimated]` in the topic (silent) or modal request (interactive) to use an example host tariff; `[demo:failure]` returns a safe HTTP503 failure and `[demo:truncated]` returns incomplete output. Both failure scenarios preserve the original field and appear as failed attempts; no paid API is contacted. The demo tariff is an example, not a live price quote. Its public demo app key and credentials are for local use only; `serve` binds to loopback.
 
 `workbench:build` migrates `workbench/database/database.sqlite`, seeds the demo user and publishes Filament assets. It is safe to repeat and does not reset the demo database. The package ServiceProvider never loads the demo providers in a consuming application.
 
