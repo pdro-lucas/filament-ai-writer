@@ -29,6 +29,10 @@ class FilamentAiWriterServiceProvider extends ServiceProvider
 
   public function boot(): void
   {
+    if ($this->app->runningInConsole()) {
+      $this->commands([\PdroLucas\FilamentAiWriter\Console\PruneUsageCommand::class]);
+    }
+
     $this->loadViewsFrom(__DIR__ . "/../resources/views", "filament-ai-writer");
 
     $this->publishesMigrations([

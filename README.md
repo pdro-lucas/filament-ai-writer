@@ -98,7 +98,7 @@ $panel->plugin(AiWriterPlugin::make());
 
 The Laravel ServiceProvider is still auto-discovered, but discovery does not register a panel plugin. Actions used without registration display configuration guidance and do not contact the provider. Remove temporary `authorize()` or `beforeGenerate()` callbacks whose only purpose was to duplicate plugin checks; keep application-specific restrictions and generation hooks. Actions outside a current Filament panel are no longer supported.
 
-The plugin now records metadata-only usage history. An authorized current-panel statistics page is registered by the plugin. Retention arrives in a subsequent layer; no quotas or administration screens are included.
+The plugin now records metadata-only usage history. An authorized current-panel statistics page is registered by the plugin. Opt-in retention is available through a maintenance command; no quotas or administration screens are included.
 
 ## Usage
 
@@ -432,7 +432,7 @@ Costs and tariff snapshots use canonical USD **TEXT** with twelve fractional dig
 
 Both token totals, both valid string rates and the returned model must be known. Literal model identifiers containing `/` or `.` are supported. Requested aliases do not substitute for returned models. Provider-reported cost, including zero, takes precedence. Estimation multiplies inclusive totals once, rounds half-up only after summing both components, and records `estimated` plus the applied rate snapshot. Cache/reasoning details are not billed again. Missing, numeric/float, negative, overly precise or unmatched rates leave cost unavailable. Rates represent a host estimate of inclusive usage, not a promise to reproduce cache tier, reasoning tier or external BYOK billing. Historical estimates do not change when the configuration changes.
 
-No cleanup or deletion runs automatically. Retention is a separate subsequent layer. Use the plugin statistics service for authorized reporting; reading `UsageAttempt` directly remains a host server-side responsibility, not an authorized statistics API.
+No cleanup or deletion runs automatically. Use the plugin statistics service for authorized reporting; reading `UsageAttempt` directly remains a host server-side responsibility, not an authorized statistics API.
 
 ## Current-panel statistics
 
@@ -440,13 +440,30 @@ The plugin registers **AI Writer usage** at `/your-panel/ai-writer-usage`. Login
 
 The panel is fixed context, never a selectable cross-panel filter. An authorized viewer can inspect **all actors' metadata within the current panel**, not just their own calls. No cross-panel expansion/global view is exposed. Actor filters identify both actor class and opaque identifier, without joining a host User table or assuming names/roles/ID types.
 
-History is read-only and paginated (10/25/50 rows; values are also bounded server-side). Filter by local start-date period, actor, provider, returned model or status. Period boundaries use the application's timezone and convert to UTC for the stored timestamps; the end date includes the entire local calendar day. Searchable metadata options/selected labels are panel-scoped, with at most 50 search results. Table columns expose only the recorded metadata; optional columns include safe IDs, token details and tariff snapshots.
+History is read-only and paginated (10/25/50 rows; values are also bounded server-side). One screen shows Requests, Tokens consumed, Costs and Average duration above one requests histogram and a compact request table. The shared selection defaults to the last seven local calendar days, with Today/7 days/30 days/custom dates and actor/result filters. Success means delivered, failure means failed, and in progress includes pending and received. Period boundaries use the application's timezone and convert to UTC; the end date includes the entire local calendar day. Actor options are panel-scoped and bounded. Provider/model switching and comparisons are not part of the screen.
 
-Totals follow the same filters across all matching retained rows, independently of the visible page. They distinguish delivered, failed and unresolved attempts; inclusive input/output tokens; HTTP duration and local overhead; provider-reported and estimated USD subtotals; and the count of missing measurements. Known zero is included in measured coverage, while unknown never becomes measured zero. Empty/no-measurement selections display a zero **known subtotal** with zero measured coverage. Reported and estimated money remain separate; neither subtotal claims to be a complete bill.
+Rows open a right detail drawer with historical actual model/provider, exact recorded consumption/cost source, safe IDs and sanitized outcomes. Every drawer lookup rechecks current permission, guard and panel scope. Metrics, histogram and table share the same selection. Unknown measurements remain unavailable, known zero stays measured, estimated costs are labeled and incomplete known-cost subtotals show partial coverage; exact canonical values remain available in details. Token and duration summaries use available measurements and identify coverage.
 
 Aggregation reads chunks of 500 records and sums decimal/integer strings in PHP, without SQL monetary conversion, float rounding or per-attempt subtotal overflow. History uses panel/date/actor/provider/model indexes; report runtime still grows with matching retained history. No statistics aggregate runs during AI generation, and no provider price/balance/tokenizer call is added. A custom server-side integration may use `AiWriterPlugin::get()->statistics()->query()` and `summary($filteredQuery)`; summary freshly checks permission and constrains its outer query to the current panel even if given a broader query. These builders are server-side objects, not client-controlled panel selectors.
 
 Filament references: [custom pages](https://filamentphp.com/docs/5.x/navigation/custom-pages), [tables](https://filamentphp.com/docs/5.x/tables/overview).
+
+## Opt-in usage retention
+
+Nothing is deleted or scheduled by default. `retention.days` defaults to `null`; invoking cleanup without configuration or an explicit `--days` safely reports disabled. To opt in, set `AI_WRITER_RETENTION_DAYS=90` (or `retention.days` in the published config), inspect the dry run, then execute explicitly:
+
+```bash
+php artisan ai-writer:prune-usage --days=90 --dry-run
+php artisan ai-writer:prune-usage --days=90
+```
+
+Days must be a positive integer. `retention.batch_size` defaults to 500 and must be 1–1000. No package scheduler is registered. A host may schedule this command deliberately after reviewing its own retention needs and CLI/operator access. The maintenance command spans the configured usage table across panels; it does not grant cross-panel statistics access to a panel viewer.
+
+Only terminal `delivered`/`failed` attempts with a completion timestamp are eligible. Both operation start and completion must be **strictly before** the effective cutoff: the earlier of now minus the configured days and the start of the current app-local calendar month, converted to UTC. This protects unresolved `pending`/`received` rows and any row started or completed during the current app-calendar month, even with a very short retention setting. Protecting this active period is conservative preparation for future quota counters; no quota implementation is included. Unresolved rows are never presumed free or completed by cleanup.
+
+Deletion selects bounded ID batches, freezes an upper ID for the run, and rechecks eligibility in each atomic DELETE. New/backdated inserts wait for a later explicit run. There is no whole-history transaction. Dry-run counts are observations at that read, not a concurrent snapshot guarantee. Successful output reports actual deleted rows and processed batches; on an error, the command returns failure and reports the already deleted count without raw database details. Earlier completed batches remain deleted. Repeating the command does not double-count prior deletion.
+
+Deleted rows disappear from subsequent history queries, known subtotals and measurement coverage. This metadata cleanup cannot recover stored text (none is kept), prove remote billing, retry inference or alter provider accounts. Keep external backups/audit records according to the host's policy before opting in.
 
 ## Package structure
 

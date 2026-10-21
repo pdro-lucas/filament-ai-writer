@@ -2,6 +2,10 @@
 return [
   "tables" => ["usage" => "filament_ai_writer_usage"],
   "pricing" => [],
+  "retention" => [
+    "days" => env("AI_WRITER_RETENTION_DAYS"),
+    "batch_size" => 500,
+  ],
   "provider" => env("AI_WRITER_PROVIDER", "openai"),
   "anthropic" => [
     "api_key" => env("ANTHROPIC_API_KEY"),
