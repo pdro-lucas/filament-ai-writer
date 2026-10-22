@@ -50,13 +50,13 @@ class WriterDemoTest extends TestCase
 
     Livewire::test(WriterDemo::class)
       ->callAction(TestAction::make('ai_writer')->schemaComponent('content', 'form'))
-      ->assertSet('data.content', 'The test supplied this response.');
+      ->assertSet('data.content', 'The test supplied this response.')->assertDispatched('ai-writer-credits-changed');
 
     Livewire::test(WriterDemo::class)
       ->callAction(TestAction::make('ai_interactive')->schemaComponent('interactive_content', 'form'), data: [
         'ai_input' => 'Write an introduction to Filament plugins.',
       ])
-      ->assertSet('data.interactive_content', 'The test supplied this response.');
+      ->assertSet('data.interactive_content', 'The test supplied this response.')->assertDispatched('ai-writer-credits-changed');
 
     Http::assertSentCount(2);
     Http::assertSent(fn ($request) => $request->url() === 'https://api.openai.com/v1/chat/completions'

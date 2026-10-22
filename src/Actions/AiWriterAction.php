@@ -317,6 +317,7 @@ class AiWriterAction extends Action
       }
       $set($this->targetField, $value);
     }, fn () => $set($this->targetField, $original), $this->targetField, actionName: $this->getName());
+    $this->getLivewire()?->dispatch('ai-writer-credits-changed');
     $this->dispatchEvent($this->targetField, $result);
     $this->notifyGenerationSuccess();
   }

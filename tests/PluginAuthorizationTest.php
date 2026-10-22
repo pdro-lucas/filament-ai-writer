@@ -60,6 +60,31 @@ class PluginAuthorizationTest extends TestCase
     $this->assertFalse($plugin->canViewStatistics());
   }
 
+  public function test_custom_page_contract_rejects_unrelated_classes_and_stays_per_plugin_instance(): void
+  {
+    $controls = (new class extends \PdroLucas\FilamentAiWriter\Pages\AiControlsPage {})::class;
+    $credits = (new class extends \PdroLucas\FilamentAiWriter\Pages\MyAiCreditsPage {})::class;
+    $plugin = AiWriterPlugin::make()->controlsPage($controls)->creditsPage($credits);
+    $customPanel = Panel::make()->id('custom-pages')->plugin($plugin);
+    $this->assertContains($controls, $customPanel->getPages());
+    $this->assertContains($credits, $customPanel->getPages());
+    $this->assertSame($credits, $plugin->getCreditsPage());
+    $plugin->creditsInTopbar(false);
+    $this->assertFalse($plugin->hasCreditsInTopbar());
+    $defaultPanel = Panel::make()->id('default-pages')->plugin(AiWriterPlugin::make());
+    $this->assertContains(\PdroLucas\FilamentAiWriter\Pages\AiControlsPage::class, $defaultPanel->getPages());
+    $this->assertNotContains($controls, $defaultPanel->getPages());
+    $this->assertTrue($defaultPanel->getPlugin('ai-writer')->hasCreditsInTopbar());
+    foreach (['controlsPage', 'creditsPage'] as $method) {
+      try {
+        $plugin->{$method}(\Filament\Pages\Page::class);
+        $this->fail('Unrelated or abstract pages must not replace protected plugin pages.');
+      } catch (\InvalidArgumentException) {
+        $this->addToAssertionCount(1);
+      }
+    }
+  }
+
   protected function setUp(): void
   {
     parent::setUp();

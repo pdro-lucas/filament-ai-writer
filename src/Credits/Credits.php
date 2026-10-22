@@ -261,7 +261,10 @@ final class Credits
   {
     AiWriterPlugin::get()->controls()->authorize($context);
     return $this->connection()->transaction(function () use ($context): array {
-      return $this->policySnapshot($this->lockScope($context->scopeKey(), $context->scope));
+      $policy = $this->lockScope($context->scopeKey(), $context->scope);
+      AiWriterPlugin::get()->controls()->authorize($context);
+      $period = $policy->default_limit === null ? null : $this->period($policy);
+      return $this->policySnapshot($policy) + ['renews_at' => $period?->ends_at];
     });
   }
 

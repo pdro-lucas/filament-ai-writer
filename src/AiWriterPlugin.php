@@ -154,6 +154,62 @@ class AiWriterPlugin implements Plugin
     return 'ai-writer';
   }
 
+  protected bool $creditsInTopbar = true;
+
+  public function creditsInTopbar(bool $enabled = true): static
+  {
+    $this->creditsInTopbar = $enabled;
+    return $this;
+  }
+
+  public function hasCreditsInTopbar(): bool
+  {
+    return $this->creditsInTopbar;
+  }
+
+  /** @return class-string<\PdroLucas\FilamentAiWriter\Pages\MyAiCreditsPage> */
+  public function getCreditsPage(): string
+  {
+    return $this->creditsPage;
+  }
+
+  protected bool $hasUsersTab = true;
+
+  public function usersTab(bool $enabled = true): static
+  {
+    $this->hasUsersTab = $enabled;
+    return $this;
+  }
+
+  public function hasUsersTab(): bool
+  {
+    return $this->hasUsersTab;
+  }
+
+  /** @var class-string<\PdroLucas\FilamentAiWriter\Pages\AiControlsPage> */
+  protected string $controlsPage = \PdroLucas\FilamentAiWriter\Pages\AiControlsPage::class;
+
+  /** @var class-string<\PdroLucas\FilamentAiWriter\Pages\MyAiCreditsPage> */
+  protected string $creditsPage = \PdroLucas\FilamentAiWriter\Pages\MyAiCreditsPage::class;
+
+  public function controlsPage(string $page): static
+  {
+    if (!is_a($page, \PdroLucas\FilamentAiWriter\Pages\AiControlsPage::class, true) || (new \ReflectionClass($page))->isAbstract()) {
+      throw new \InvalidArgumentException('Controls page must be a concrete AiControlsPage subclass.');
+    }
+    $this->controlsPage = $page;
+    return $this;
+  }
+
+  public function creditsPage(string $page): static
+  {
+    if (!is_a($page, \PdroLucas\FilamentAiWriter\Pages\MyAiCreditsPage::class, true) || (new \ReflectionClass($page))->isAbstract()) {
+      throw new \InvalidArgumentException('Credits page must be a concrete MyAiCreditsPage subclass.');
+    }
+    $this->creditsPage = $page;
+    return $this;
+  }
+
   public function register(Panel $panel): void
   {
     if ($this->panel !== null && $this->panel !== $panel) {
@@ -161,7 +217,13 @@ class AiWriterPlugin implements Plugin
     }
 
     $this->panel = $panel;
-    $panel->pages([UsageStatisticsPage::class, \PdroLucas\FilamentAiWriter\Pages\AiControlsPage::class]);
+    $panel->pages([UsageStatisticsPage::class, $this->controlsPage, $this->creditsPage]);
+    $panel->renderHook(\Filament\View\PanelsRenderHook::USER_MENU_BEFORE, function () use ($panel) {
+      if (Filament::getCurrentPanel() !== $panel || !$this->hasCreditsInTopbar()) { return ''; }
+      try { if (!$this->canUseAi()) { return ''; } }
+      catch (\Throwable) { return ''; }
+      return view('filament-ai-writer::credits-indicator-hook', ['panelId' => $panel->getId()]);
+    });
   }
 
   public function boot(Panel $panel): void {}

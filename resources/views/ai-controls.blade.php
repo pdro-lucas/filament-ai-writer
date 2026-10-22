@@ -1,29 +1,20 @@
 <x-filament-panels::page>
-  <x-filament::section heading="Availability">
-    <div class="space-y-4">
-      <p class="text-sm text-gray-700 dark:text-gray-200">{{ $enabled ? 'AI is enabled' : 'AI is disabled' }}.</p>
-      <div class="flex flex-wrap gap-3">
-        {{ $this->enableAction }}
-        {{ $this->disableAction }}
-      </div>
-    </div>
-  </x-filament::section>
-
-  <x-filament::section heading="Individual access">
-    <div class="space-y-4">
-      @if ($hasDirectory)
-        <p class="text-sm text-gray-700 dark:text-gray-200">Block or restore AI access for a user. Every change requires a reason.</p>
-        <div class="flex flex-wrap gap-3">
-          {{ $this->blockActorAction }}
-          {{ $this->unblockActorAction }}
-        </div>
-      @else
-        <p class="text-sm text-gray-700 dark:text-gray-200">User search is not configured. Contact your application administrator to manage individual access.</p>
+  @include('filament-ai-writer::controls.styles')
+  <div class="ai-controls" data-ai-controls="admin">
+    <x-filament::tabs :contained="true" class="ai-controls-nav" label="AI administration">
+      @foreach (['settings' => 'Settings', 'users' => 'Users', 'activity' => 'Activity'] as $key => $label)
+        @continue($key === 'users' && !$hasUsersTab)
+        <x-filament::tabs.item :active="$section === $key" wire:click="showSection('{{ $key }}')">{{ $label }}</x-filament::tabs.item>
+      @endforeach
+    </x-filament::tabs>
+    <div data-ai-controls="{{ $section }}" wire:key="ai-task-{{ $section }}">
+      @if ($section === 'settings')
+        @include('filament-ai-writer::controls.settings')
+      @elseif ($section === 'users')
+        @include('filament-ai-writer::controls.users')
+      @elseif ($section === 'activity')
+        {{ $this->table }}
       @endif
     </div>
-  </x-filament::section>
-
-  <x-filament::section heading="Audit history" description="Availability and individual access changes.">
-    {{ $this->table }}
-  </x-filament::section>
+  </div>
 </x-filament-panels::page>

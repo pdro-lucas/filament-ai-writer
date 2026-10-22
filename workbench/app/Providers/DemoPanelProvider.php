@@ -36,10 +36,10 @@ class DemoPanelProvider extends PanelProvider
         ->actorDirectoryUsing(
           search: fn (string $search): array => User::query()->where(function ($query) use ($search): void {
             $query->where('name', 'like', '%' . $search . '%')->orWhere('email', 'like', '%' . $search . '%');
-          })->limit(50)->get()->map(fn (User $user): ActorIdentity => new ActorIdentity(User::class, $user->getAuthIdentifier(), $user->name))->all(),
+          })->limit(50)->get()->map(fn (User $user): ActorIdentity => new ActorIdentity(User::class, $user->getAuthIdentifier(), $user->name . ' · ' . $user->email))->all(),
           resolve: function (string $type, string $id): ?ActorIdentity {
             $user = $type === User::class ? User::query()->find($id) : null;
-            return $user === null ? null : new ActorIdentity(User::class, $user->getAuthIdentifier(), $user->name);
+            return $user === null ? null : new ActorIdentity(User::class, $user->getAuthIdentifier(), $user->name . ' · ' . $user->email);
           },
         ))
       ->pages([WriterDemo::class])

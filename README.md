@@ -685,3 +685,94 @@ Before contributing, please ensure your changes follow the existing code style a
 ## License
 
 This project is open-sourced under the [MIT license](LICENSE.md).
+
+### Controls and personal credits
+
+The plugin registers **AI Writer controls** (`ai-writer-controls`) for `canManage()` and **My AI credits** (`my-ai-credits`) for `canUseAi()`. Own credits need neither management nor statistics permission and always use the authenticated actor, guard and current scope. Generation rechecks admission on the server.
+
+Settings uses native Filament aside Sections for availability, credits and each protection. Forms edit inline; saving asks for a reason and confirms the settings. Thresholds must be explicit integers. Extras, individual reset and global renewal are separate audited actions. Users uses a native searchable table with at most50 directory matches and a reusable Manage AI modal. Only an opened user's detail loads balance/status. Activity shows native paginated audit records with dates, administrator, user, action and reason. Internal before/after snapshots remain stored and are not displayed.
+
+Supply a human `ActorIdentity::label` in both directory callbacks, such as `name . ' · ' . email` when your host owns those fields. Workbench demonstrates this. The plugin never infers a User model or email column. IDs are fallback labels only, without routine secondary IDs or class names. Activity memoizes distinct scoped identities on the current page; removed users or a failing resolver fall back to IDs. Labels and reasons are escaped.
+
+### Use your existing Resource or table
+
+Disable only the built-in Users task per plugin instance:
+
+```php
+AiWriterPlugin::make()
+    ->usersTab(false)
+    ->actorDirectoryUsing(
+        search: fn () => [], // No built-in search needed in this host.
+        resolve: fn (string $type, string $id, string $scope) =>
+            $directory->resolveManageableActor($type, $id, $scope),
+    );
+```
+
+Settings and Activity remain available. `usersTab(false)` rejects forged Users requests too; it does not change permissions or disable the scoped resolver. The resolver must return the requested `ActorIdentity` or null, scoped to actors this administrator can manage. It remains required for host actions even when search returns no results.
+
+Use the same native action in a table, Resource record page or ordinary Filament page. The callback maps a host record to an explicit identity; no plugin administration page or copied domain logic is required:
+
+```php
+use PdroLucas\FilamentAiWriter\Actions\ManageAiUserAction;
+use PdroLucas\FilamentAiWriter\Controls\ActorIdentity;
+
+$table->recordActions([
+    ManageAiUserAction::make()->actorUsing(fn ($record): ActorIdentity =>
+        new ActorIdentity(HostMember::class, $record->getKey(), $record->displayLabel())
+    ),
+]);
+
+// In a Resource record page's getHeaderActions():
+return [ManageAiUserAction::make()->actorUsing(fn (): ActorIdentity =>
+    new ActorIdentity(HostMember::class, $this->getRecord()->getKey(), $this->getRecord()->displayLabel())
+)];
+```
+
+On an ordinary Filament page, expose the action from a method and render it as a normal Filament action. Plain Livewire hosts need Filament's standard HasActions/HasSchemas setup. No plugin-specific trait or properties are needed.
+
+Manage AI opens a native compact modal with one human identity, access/credit fields and separate Block/Unblock, limit/default, extra-credit and reset confirmations. Server mount authenticates the host identity with the directory and seals purpose, component, context and target using Laravel Crypt. Reads and mutations validate the envelope against fresh panel/guard/scope/admin context and resolve the actor again. Child confirmations have their own purpose. Browser plaintext actor/context arguments cannot establish authority or redirect an open confirmation. Non-authorization host callback failures return a safe unavailable/validation state; authorization exceptions are preserved.
+
+`Schemas\AiCreditStatus::components($balance, $abuse, $availability)` exposes the native status/credit presentation for hosts already using the authorized public APIs. It accepts their snapshots (`$availability` has `enabled`/`blocked`) and does not authorize arbitrary data. The built-in own page uses target-free reads; ManageAiUserAction handles administrative reads itself.
+
+### Topbar credits
+
+A native Sparkles button before the current panel's user menu shows the authenticated user's available credits and links to that instance's default/custom My AI credits page. It requires `canUseAi()`, never management. With quotas off it shows **Unlimited**, with **Credits are off** as the tooltip; retained balances are not presented as spendable. Storage failures show **Credits unavailable** without breaking the page. Guests, denied users, other panels and changed contexts cannot see stale balances.
+
+The hook is attached to the plugin's panel and checks that panel when rendered. The Livewire indicator locks its initial server context and uses own APIs only, without a user directory. It refreshes on the native `ai-writer-credits-changed` event emitted after delivered writer actions or successful administrative UI changes. No polling or custom JavaScript is used. Remote sessions and direct service calls do not broadcast browser events; a normal page refresh retrieves their changes. A host with another credit control may opt out or emit that same refresh event after its own successful flow:
+
+```php
+AiWriterPlugin::make()->creditsInTopbar(false);
+```
+
+### Customize native presentation
+
+Filament owns colors, borders, radii, inputs, tabs and modal styles. The plugin page wrapper is transparent; it does not impose a separate palette. Use your Filament theme for visual styling. Plugin CSS only sets layout gap/minimum width and left-aligned navigation. The inherited layout token works without `!important`:
+
+```css
+:root { --ai-writer-controls-gap: 1rem; }
+/* Optional host override, scoped to this plugin; no override is shipped by default. */
+.ai-controls[data-ai-controls="admin"] .fi-section { box-shadow: none; }
+```
+
+Stable page hooks: `.ai-controls`, `.ai-controls-nav` and `[data-ai-controls]` with values `admin`, `settings`, `users`, `activity`, `own-credits`, `credits-indicator`; native table/status aliases `.ai-controls-directory`, `.ai-controls-list`, `.ai-controls-ledger`, `.ai-controls-meta`, `.ai-controls-status` and its `data-state="available|paused"`. Palette variables from early UI4 drafts are not mapped onto native components. Any optional color rules belong in the host theme/CSS, explicitly scoped by these hooks.
+
+Laravel namespaced views and partials remain overridable. Copy only the view you need into `resources/views/vendor/filament-ai-writer`, for example `controls/balance.blade.php` to customize the built-in own page. That partial receives `$balance`, `$abuse`, `$enabled`, `$blocked` and renders the shared native schema. ManageAiUserAction calls AiCreditStatus directly and does not render that Blade partial; its presentation can be extended in a ManageAiUserAction subclass while keeping inherited guards. Other partials are `controls/settings`, `controls/users` and `controls/styles`; full pages are `ai-controls`, `my-ai-credits`; the indicator views are `credits-indicator` and `credits-indicator-hook`. Keep Blade escaping and server authorization intact. Publish views for reference with:
+
+```bash
+php artisan vendor:publish --tag=filament-ai-writer-views
+```
+
+For PHP presentation extensions, configure concrete subclasses before registering the plugin:
+
+```php
+class TeamAiControls extends \PdroLucas\FilamentAiWriter\Pages\AiControlsPage
+{
+    protected static ?string $title = 'Team AI controls';
+}
+
+AiWriterPlugin::make()
+    ->controlsPage(TeamAiControls::class)
+    ->creditsPage(\App\Filament\Pages\MyCredits::class); // extends MyAiCreditsPage
+```
+
+Setters stay local to that instance and reject unrelated/abstract classes. The topbar uses the registered credit-page class for its URL. Preserve inherited permissions, mount/hydrate context checks and public Controls/Credits/Abuse seams when extending lifecycle or behavior.

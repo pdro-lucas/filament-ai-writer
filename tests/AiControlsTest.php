@@ -3,6 +3,8 @@
 namespace PdroLucas\FilamentAiWriter\Tests;
 
 use Filament\Facades\Filament;
+use Filament\Actions\Testing\TestAction;
+use PdroLucas\FilamentAiWriter\Tests\Fixtures\HostAiUserPage;
 use Illuminate\Foundation\Testing\DatabaseMigrations;
 use Illuminate\Support\Facades\Http;
 use PdroLucas\FilamentAiWriter\AiWriterPlugin;
@@ -181,9 +183,9 @@ class AiControlsTest extends TestCase
     $context = $plugin->controlContext();
     $this->assertFalse($plugin->hasActorDirectory());
     \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\AiControlsPage::class)
-      ->assertSee('User search is not configured.')
+      ->call('showSection', 'users')->assertSee('User search is not configured.')
       ->callAction('disable', data: ['reason' => 'Maintenance'])
-      ->assertSee('AI is disabled')->assertCountTableRecords(1);
+      ->call('showSection', 'settings')->assertSee('AI is disabled')->call('showSection', 'activity')->assertCountTableRecords(1);
     try {
       $plugin->controls()->setBlocked($context, $context->actor, true, 'Hold');
       $this->fail('Unvalidated identity must be rejected');
@@ -198,22 +200,336 @@ class AiControlsTest extends TestCase
     $plugin = AiWriterPlugin::get();
     $actor = new \PdroLucas\FilamentAiWriter\Controls\ActorIdentity('HostPerson', 'opaque:009', '<img src=x onerror=alert(1)>');
     $available = true;
-    $plugin->actorDirectoryUsing(fn () => array_map(fn ($id) => new \PdroLucas\FilamentAiWriter\Controls\ActorIdentity('HostPerson', $id, '<b>User</b>'), range(1, 100)),
+    $plugin->actorDirectoryUsing(fn () => [$actor, ...array_map(fn ($id) => new \PdroLucas\FilamentAiWriter\Controls\ActorIdentity('HostPerson', $id, '<b>User</b>'), range(1, 100))],
       function ($type, $id) use ($actor, &$available) { return $available && $type === $actor->type && $id === $actor->id ? $actor : null; });
     $this->assertCount(50, $plugin->searchActors('user', $plugin->controlContext()));
     $page = \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\AiControlsPage::class)
-      ->mountAction('blockActor')->setActionData(['actor' => $actor->token(), 'reason' => '<script>Hold</script>']);
+      ->call('showSection', 'users')->searchTable('user')
+      ->mountAction(TestAction::make('manageAiUser')->table($actor->token()))
+      ->mountAction('block')->setActionData(['reason' => '<script>Hold</script>']);
     $this->assertStringNotContainsString('<img src=x onerror=alert(1)>', $page->html());
     $available = false;
-    $page->callMountedAction()->assertHasActionErrors(['actor']);
+    $page->callMountedAction();
+    $page->assertMountedActionModalSee('User unavailable');
     $this->assertFalse($plugin->controls()->blocked($plugin->controlContext(), $actor));
     $available = true;
-    $page->callMountedAction()->assertHasNoActionErrors()->assertNotified('AI controls updated')
-      ->assertDontSeeHtml('<script>Hold</script>');
+    $page->unmountAction(cancelParentActions: true)->mountAction(TestAction::make('manageAiUser')->table($actor->token()))
+      ->mountAction('block')->setActionData(['reason' => '<script>Hold</script>'])->callMountedAction()->assertHasNoActionErrors()->assertNotified('AI controls updated')
+      ->assertDontSeeHtml('<script>Hold</script>')->assertSet('tableSearch', 'user');
     $this->assertTrue($plugin->controls()->blocked($plugin->controlContext(), $actor));
-    $page->callAction('unblockActor', data: ['actor' => $actor->token(), 'reason' => 'Release'])
-      ->assertHasNoActionErrors();
+    $page->callAction('unblock', data: ['reason' => 'Release'])->assertHasNoActionErrors();
     $this->assertFalse($plugin->controls()->blocked($plugin->controlContext(), $actor));
+  }
+
+  public function test_user_actions_keep_the_confirmed_target_and_audit_credit_effects(): void
+  {
+    $this->login();
+    $this->app['view']->addNamespace('ai-controls-tests', __DIR__ . '/Fixtures');
+    $plugin = AiWriterPlugin::get();
+    $context = $plugin->controlContext();
+    $first = new \PdroLucas\FilamentAiWriter\Controls\ActorIdentity('HostPerson', 'first', 'First · first@example.test');
+    $second = new \PdroLucas\FilamentAiWriter\Controls\ActorIdentity('HostPerson', 'second', 'Second');
+    $plugin->actorDirectoryUsing(fn () => [$first, $second], fn ($type, $id) => $type === 'HostPerson' ? (['first' => $first, 'second' => $second][$id] ?? null) : null);
+    $plugin->credits()->configure($context, true, 10, 'manual', 'Start');
+    $page = \Livewire\Livewire::test(HostAiUserPage::class)
+      ->mountAction('manageAiUser')->mountAction('block')->setActionData(['reason' => 'Hold first'])
+      ->set('actorId', 'second')->callMountedAction()->assertHasNoActionErrors()->assertDispatched('ai-writer-credits-changed');
+    $this->assertTrue($plugin->controls()->blocked($context, $first));
+    $this->assertFalse($plugin->controls()->blocked($context, $second));
+    $page->unmountAction()->mountAction('manageAiUser')
+      ->callAction('limit', data: ['limit' => '12', 'reason' => 'Set limit'])->assertHasNoActionErrors()
+      ->callAction('extra', data: ['amount' => '3', 'reason' => 'Extra'])->assertHasNoActionErrors();
+    $this->assertSame(15, $plugin->credits()->balance($context, $second)['available']);
+    $page->callAction('restoreLimit', data: ['reason' => 'Restore'])->assertHasNoActionErrors();
+    $this->assertSame(13, $plugin->credits()->balance($context, $second)['available']);
+    $page->callAction('resetPeriod', data: ['reason' => 'Reset'])->assertHasNoActionErrors();
+    $this->assertSame(10, $plugin->credits()->balance($context, $second)['available']);
+    $this->assertSame(['quota_policy', 'block', 'quota_limit', 'quota_extra', 'quota_limit', 'quota_reset'], $plugin->controls()->audit($context)->orderBy('id')->pluck('action')->all());
+  }
+
+  public function test_native_users_table_is_bounded_and_keeps_task_state_and_opt_out_is_enforced(): void
+  {
+    $this->login();
+    $plugin = AiWriterPlugin::get();
+    $context = $plugin->controlContext();
+    $resolved = 0;
+    $plugin->actorDirectoryUsing(fn (string $search) => array_map(fn ($id) => new \PdroLucas\FilamentAiWriter\Controls\ActorIdentity('HostPerson', (string) $id, $search . ' Person ' . $id), range(1, 60)),
+      function ($type, $id) use (&$resolved) { $resolved++; return new \PdroLucas\FilamentAiWriter\Controls\ActorIdentity($type, $id, 'Person'); });
+    for ($i = 0; $i < 12; $i++) { $plugin->controls()->setEnabled($context, $i % 2 === 1, 'Reason ' . $i); }
+    $page = \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\AiControlsPage::class)->call('showSection', 'users')->searchTable('Ada');
+    $this->assertCount(50, $page->instance()->getTableRecords());
+    $this->assertSame(0, $resolved, 'The list must not resolve actors or load balances per row.');
+    $page->call('showSection', 'activity')->assertCountTableRecords(12)->assertSet('tableSearch', '')
+      ->set('tableRecordsPerPage', 10)->call('setPage', 2);
+    $page->call('showSection', 'users')->assertSet('tableSearch', 'Ada');
+    $this->assertCount(50, $page->instance()->getTableRecords());
+    $page->call('showSection', 'activity')->assertCountTableRecords(12);
+    $this->assertSame(2, $page->instance()->getTablePage());
+    $plugin->usersTab(false);
+    $page = \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\AiControlsPage::class)->assertDontSee('wire:click="showSection(\'users\')"', false)
+      ->call('showSection', 'activity')->assertCountTableRecords(12);
+    $page->call('showSection', 'users')->assertForbidden();
+    \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\AiControlsPage::class)
+      ->mountAction(TestAction::make('manageAiUser')->table('forged'))->assertActionNotMounted();
+    $this->expectException(\Livewire\Features\SupportLockedProperties\CannotUpdateLockedPropertyException::class);
+    \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\AiControlsPage::class)->set('section', 'users');
+  }
+
+  public function test_host_action_authenticates_child_purpose_component_and_frozen_context(): void
+  {
+    $this->login();
+    $this->app['view']->addNamespace('ai-controls-tests', __DIR__ . '/Fixtures');
+    $plugin = AiWriterPlugin::get()->usersTab(false);
+    $scope = 'tenant:A';
+    $plugin->resolveScopeUsing(function () use (&$scope) { return $scope; });
+    $context = $plugin->controlContext();
+    $first = new \PdroLucas\FilamentAiWriter\Controls\ActorIdentity('HostPerson', 'first', 'First · first@example.test');
+    $plugin->actorDirectoryUsing(fn () => [], fn ($type, $id) => $type === $first->type && $id === $first->id ? $first : null);
+    $plugin->credits()->configure($context, true, 10, 'manual', 'Start');
+    $mount = fn () => \Livewire\Livewire::test(HostAiUserPage::class)->mountAction('manageAiUser');
+    $page = $mount();
+    $this->assertSame('First · first@example.test', $page->instance()->getMountedAction()->getModalHeading());
+    $parent = $page->get('mountedActions.0.arguments.aiConfirmation');
+    $this->assertIsString($parent);
+    $page->mountAction('extra')->setActionData(['amount' => '2', 'reason' => 'Grant'])
+      ->set('mountedActions.1.arguments.aiConfirmation', $parent)->callMountedAction()->assertForbidden();
+    $page = $mount()->mountAction('extra')->setActionData(['amount' => '2', 'reason' => 'Grant']);
+    $page->set('mountedActions.1.arguments.aiConfirmation', 'tampered')->callMountedAction()->assertForbidden();
+    $mount()->set('mountedActions.0.arguments.aiConfirmation', $parent)->mountAction('extra')->assertForbidden(); // Different component instance.
+    $page = $mount()->mountAction('extra')->setActionData(['amount' => '2', 'reason' => 'Grant']);
+    $scope = 'tenant:B';
+    $page->callMountedAction()->assertForbidden();
+    $scope = 'tenant:A';
+    $panel = Filament::getCurrentPanel();
+    $admin = $panel->auth()->user();
+    $page = $mount()->mountAction('extra')->setActionData(['amount' => '2', 'reason' => 'Grant']);
+    $panel->authGuard('web');
+    $this->app['auth']->guard('web')->setUser($admin);
+    $page->callMountedAction()->assertForbidden();
+    $panel->authGuard('workbench');
+    $page = $mount()->mountAction('extra')->setActionData(['amount' => '2', 'reason' => 'Grant']);
+    $this->app['auth']->guard('workbench')->setUser(new \Illuminate\Auth\GenericUser(['id' => 'another-admin']));
+    $page->callMountedAction()->assertForbidden();
+    $this->app['auth']->guard('workbench')->setUser($admin);
+    $page = $mount()->mountAction('extra')->setActionData(['amount' => '2', 'reason' => 'Grant']);
+    $other = \Filament\Panel::make()->id('other-host')->authGuard('workbench')->plugin(AiWriterPlugin::make()->authorizeManageUsing(fn () => true));
+    Filament::setCurrentPanel($other);
+    $page->callMountedAction()->assertForbidden();
+    Filament::setCurrentPanel($panel);
+    $page = $mount()->mountAction('extra')->setActionData(['amount' => '2', 'reason' => 'Grant']);
+    $plugin->authorizeManageUsing(fn () => false);
+    $page->callMountedAction()->assertForbidden();
+    $plugin->authorizeManageUsing(fn () => true);
+    $this->assertSame(10, $plugin->credits()->balance($context, $first)['available']);
+    $this->assertSame(1, $plugin->controls()->audit($context)->count());
+  }
+
+  public function test_host_action_handles_callback_failures_removal_and_invalid_identity_without_swallowing_authorization(): void
+  {
+    $this->login();
+    $this->app['view']->addNamespace('ai-controls-tests', __DIR__ . '/Fixtures');
+    $plugin = AiWriterPlugin::get();
+    $context = $plugin->controlContext();
+    $actor = new \PdroLucas\FilamentAiWriter\Controls\ActorIdentity('HostPerson', 'first', 'First');
+    $failure = null;
+    $plugin->actorDirectoryUsing(fn () => [], function () use ($actor, &$failure) {
+      if ($failure === 'runtime') { throw new \RuntimeException('Private host failure'); }
+      if ($failure === 'authorization') { throw new \Illuminate\Auth\Access\AuthorizationException(); }
+      if ($failure === 'http') { abort(403); }
+      if ($failure === 'http-server') { abort(500); }
+      return $failure === 'removed' ? null : $actor;
+    });
+    $plugin->credits()->configure($context, true, 10, 'manual', 'Start');
+    config(['testing.host_actor_error' => 'runtime']);
+    \Livewire\Livewire::test(HostAiUserPage::class)->mountAction('manageAiUser')->assertHasErrors(['actor'])->assertNotified('User unavailable')->assertDontSee('Host directory offline');
+    config(['testing.host_actor_error' => 'http-server']);
+    \Livewire\Livewire::test(HostAiUserPage::class)->mountAction('manageAiUser')->assertHasErrors(['actor']);
+    config(['testing.host_actor_error' => null]);
+    $failure = 'runtime';
+    \Livewire\Livewire::test(HostAiUserPage::class)->mountAction('manageAiUser')->assertHasErrors(['actor'])->assertDontSee('Private host failure');
+    $failure = null;
+    foreach (['runtime', 'http-server', 'removed'] as $error) {
+      $page = \Livewire\Livewire::test(HostAiUserPage::class)->mountAction('manageAiUser')
+        ->mountAction('limit')->setActionData(['limit' => '12', 'reason' => 'Attempt']);
+      $failure = $error;
+      $page->callMountedAction()->assertHasErrors(['actor'])->assertNotified('User unavailable');
+      $page->assertDontSee('Private host failure');
+      $failure = null;
+    }
+    foreach (['', "invalid\0id", str_repeat('x', 256)] as $id) {
+      \Livewire\Livewire::test(HostAiUserPage::class)->set('actorId', $id)->mountAction('manageAiUser')->assertHasErrors(['actor']);
+    }
+    foreach (['authorization', 'http'] as $error) {
+      config(['testing.host_actor_error' => $error]);
+      \Livewire\Livewire::test(HostAiUserPage::class)->mountAction('manageAiUser')->assertForbidden();
+      config(['testing.host_actor_error' => null]);
+      $failure = $error;
+      \Livewire\Livewire::test(HostAiUserPage::class)->mountAction('manageAiUser')->assertForbidden();
+      $failure = null;
+      $page = \Livewire\Livewire::test(HostAiUserPage::class)->mountAction('manageAiUser')->mountAction('extra')->setActionData(['amount' => '2', 'reason' => 'Attempt']);
+      $failure = $error;
+      $page->callMountedAction()->assertForbidden();
+      $failure = null;
+    }
+    $this->assertSame(10, $plugin->credits()->balance($context, $actor)['available']);
+    $this->assertSame(1, $plugin->controls()->audit($context)->count());
+  }
+
+  public function test_topbar_shows_only_own_credits_refreshes_and_distinguishes_off_and_storage_failure(): void
+  {
+    $this->login();
+    $plugin = AiWriterPlugin::get();
+    $context = $plugin->controlContext();
+    $other = new \PdroLucas\FilamentAiWriter\Controls\ActorIdentity('HostPerson', 'other', 'Other');
+    $resolves = 0;
+    $plugin->actorDirectoryUsing(fn () => $this->fail('The topbar must not search actors'), function ($type, $id) use ($context, $other, &$resolves) {
+      $resolves++;
+      return $type === $context->actor->type && $id === $context->actor->id ? $context->actor : ($type === $other->type && $id === $other->id ? $other : null);
+    });
+    $plugin->credits()->configure($context, true, 1000, 'manual', 'Start');
+    $plugin->credits()->grant($context, $context->actor, 7, 'Own extra');
+    $plugin->credits()->grant($context, $other, 5000, 'Other extra');
+    $resolves = 0;
+    $plugin->authorizeManageUsing(fn () => false)->authorizeViewStatisticsUsing(fn () => false);
+    $indicator = \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Livewire\OwnCreditsIndicator::class)
+      ->assertSee('1,007 credits')->assertDontSee('6,000 credits')
+      ->assertSee('/demo/my-ai-credits', false);
+    $this->assertSame(0, $resolves);
+    $plugin->authorizeManageUsing(fn () => true);
+    $plugin->credits()->grant($context, $context->actor, 1, 'Own change');
+    $plugin->authorizeManageUsing(fn () => false);
+    $indicator->dispatch('ai-writer-credits-changed')->assertSee('1,008 credits');
+    $plugin->authorizeManageUsing(fn () => true);
+    $plugin->credits()->configure($context, false, 1000, 'manual', 'Turn off');
+    $plugin->authorizeManageUsing(fn () => false);
+    $indicator->dispatch('ai-writer-credits-changed')->assertSee('Unlimited')->assertSee('Credits are off')->assertDontSee('1,008 credits');
+    \Illuminate\Support\Facades\Schema::rename('filament_ai_writer_policies', 'unavailable_policies');
+    try { $indicator->dispatch('ai-writer-credits-changed')->assertSee('Credits unavailable')->assertDontSee('0 credits'); }
+    finally { \Illuminate\Support\Facades\Schema::rename('unavailable_policies', 'filament_ai_writer_policies'); }
+  }
+
+  public function test_topbar_is_panel_scoped_permission_gated_opt_out_and_snapshot_fenced(): void
+  {
+    Filament::setCurrentPanel(Filament::getPanel('demo'));
+    \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Livewire\OwnCreditsIndicator::class)->assertDontSee('Unlimited');
+    $this->login();
+    $plugin = AiWriterPlugin::get();
+    $scope = 'tenant:A';
+    $plugin->resolveScopeUsing(function () use (&$scope) { return $scope; });
+    $indicator = \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Livewire\OwnCreditsIndicator::class)->assertSee('Unlimited');
+    $scope = 'tenant:B';
+    $indicator->dispatch('ai-writer-credits-changed')->assertDontSee('Unlimited')->assertDontSee(' credits');
+    $scope = 'tenant:A';
+    $indicator = \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Livewire\OwnCreditsIndicator::class);
+    $plugin->authorizeUseAiUsing(fn () => false);
+    $indicator->dispatch('ai-writer-credits-changed')->assertDontSee('Unlimited');
+    $plugin->authorizeUseAiUsing(fn () => true)->creditsInTopbar(false);
+    \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Livewire\OwnCreditsIndicator::class)->assertDontSee('Unlimited');
+    $plugin->creditsInTopbar(true);
+    Filament::bootCurrentPanel();
+    $hook = \Filament\Support\Facades\FilamentView::renderHook(\Filament\View\PanelsRenderHook::USER_MENU_BEFORE)->toHtml();
+    $this->assertStringContainsString('data-ai-controls="credits-indicator"', $hook);
+    $indicator = \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Livewire\OwnCreditsIndicator::class);
+    $other = \Filament\Panel::make()->id('no-ai-plugin')->authGuard('workbench');
+    Filament::setCurrentPanel($other);
+    $hook = \Filament\Support\Facades\FilamentView::renderHook(\Filament\View\PanelsRenderHook::USER_MENU_BEFORE)->toHtml();
+    $this->assertStringNotContainsString('credits-indicator', $hook);
+    $indicator->dispatch('ai-writer-credits-changed')->assertDontSee('Unlimited');
+    \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Livewire\OwnCreditsIndicator::class)->assertDontSee('Unlimited');
+    Filament::setCurrentPanel(Filament::getPanel('demo'));
+    $this->expectException(\Livewire\Features\SupportLockedProperties\CannotUpdateLockedPropertyException::class);
+    \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Livewire\OwnCreditsIndicator::class)->set('contextSnapshot.2', 'forged-scope');
+  }
+
+  public function test_inline_settings_validate_raw_integers_and_enable_only_explicit_thresholds(): void
+  {
+    $this->login();
+    $plugin = AiWriterPlugin::get();
+    $context = $plugin->controlContext();
+    $page = \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\AiControlsPage::class);
+    foreach (['1.5', '1e3', '2147483648', '-1'] as $invalid) {
+      $page->fillForm(['enabled' => true, 'limit' => $invalid, 'renewal' => 'manual'], 'creditForm')
+        ->call('confirmSettings', 'credit')->assertHasErrors(['creditData.limit']);
+    }
+    $this->assertFalse($plugin->credits()->policy($context)['enabled']);
+    $this->assertSame(0, $plugin->controls()->audit($context)->count());
+    $page->fillForm(['enabled' => true, 'limit' => '1200', 'renewal' => 'daily'], 'creditForm')
+      ->mountAction(TestAction::make('saveCredit')->schemaComponent('creditActions', 'settings'))->setActionData(['reason' => 'Start daily credits'])->callMountedAction()->assertHasNoActionErrors();
+    $this->assertSame(1200, $plugin->credits()->policy($context)['limit']);
+    $this->assertNotNull($plugin->credits()->policy($context)['renews_at']);
+    $page->fillForm(['rate_enabled' => true, 'rate_limit' => null, 'rate_window_seconds' => null], 'rateForm')
+      ->call('confirmSettings', 'rate')->assertHasErrors(['rateData.rate_limit']);
+    $this->assertFalse($plugin->abuse()->policy($context)['rate_enabled']);
+    foreach ([['rate', ['rate_enabled' => true, 'rate_limit' => '2', 'rate_window_seconds' => '60']],
+      ['concurrency', ['concurrency_enabled' => true, 'concurrency_limit' => '1']],
+      ['failure', ['failure_enabled' => true, 'failure_limit' => '2', 'failure_window_seconds' => '60', 'failure_pause_seconds' => '30']]] as [$group, $values]) {
+      $page->fillForm($values, $group . 'Form')->call('confirmSettings', $group)
+        ->setActionData(['reason' => 'Configure protection'])->callMountedAction()->assertHasNoActionErrors();
+      $this->assertTrue($plugin->abuse()->policy($context)[$group . '_enabled']);
+    }
+    $page->fillForm(['rate_enabled' => false, 'rate_limit' => '2', 'rate_window_seconds' => '60'], 'rateForm')
+      ->call('confirmSettings', 'rate')->setActionData(['reason' => 'Disable frequency'])->callMountedAction()->assertHasNoActionErrors();
+    $this->assertFalse($plugin->abuse()->policy($context)['rate_enabled']);
+    $this->assertSame(2, $plugin->abuse()->policy($context)['rate_limit']);
+    $this->assertSame(5, $plugin->controls()->audit($context)->count());
+    $page->callAction('renew', data: ['reason' => 'Renew everyone'])->assertHasNoActionErrors();
+    $this->assertSame('quota_renew', $plugin->controls()->audit($context)->latest('id')->first()->action);
+    $page->fillForm(['concurrency_enabled' => false, 'concurrency_limit' => '1'], 'concurrencyForm')
+      ->call('confirmSettings', 'concurrency')->setActionData(['reason' => 'Permission revoked']);
+    $plugin->authorizeManageUsing(fn () => false);
+    $page->callMountedAction()->assertForbidden();
+  }
+
+  public function test_own_credit_page_uses_only_current_actor_without_management_and_rechecks_context(): void
+  {
+    $this->login();
+    \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\MyAiCreditsPage::class)->assertSee('No credit limit configured')->assertDontSee('No credits available');
+    $plugin = AiWriterPlugin::get();
+    $context = $plugin->controlContext();
+    $plugin->credits()->configure($context, true, 12, 'manual', 'Start');
+    $plugin->controls()->setEnabled($context, false, 'Maintenance');
+    $plugin->controls()->setBlocked($context, $context->actor, true, 'Hold');
+    $plugin->authorizeManageUsing(fn () => false)->authorizeViewStatisticsUsing(fn () => false);
+    $page = \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\MyAiCreditsPage::class)
+      ->assertSee('Available credits')->assertSee('AI paused')->assertDontSee('Settings')
+      ->assertDontSee('scope_key')->assertDontSee('Your AI access is blocked.');
+    $this->assertSame(['enabled' => false, 'blocked' => true], $plugin->controls()->ownStatus($context));
+    \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\AiControlsPage::class)->assertForbidden();
+    $plugin->resolveScopeUsing(fn () => 'another-scope');
+    $page->call('$refresh')->assertForbidden();
+    $currentPage = \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\MyAiCreditsPage::class);
+    $plugin->authorizeUseAiUsing(fn () => false);
+    $currentPage->call('$refresh')->assertForbidden();
+    \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\MyAiCreditsPage::class)->assertForbidden();
+    $this->expectException(\Symfony\Component\HttpKernel\Exception\HttpException::class);
+    $plugin->controls()->ownStatus($context);
+  }
+
+  public function test_activity_resolves_distinct_scoped_identities_once_and_safely_falls_back(): void
+  {
+    $this->login();
+    $plugin = AiWriterPlugin::get();
+    $context = $plugin->controlContext();
+    $actor = new \PdroLucas\FilamentAiWriter\Controls\ActorIdentity('HostPerson', 'target', '<b>Target · target@example.test</b>');
+    $calls = [];
+    $broken = false;
+    $plugin->actorDirectoryUsing(fn () => [$actor], function ($type, $id, $scope) use ($context, $actor, &$calls, &$broken) {
+      $this->assertSame($context->scope, $scope);
+      $calls[] = [$type, $id];
+      if ($broken) { throw new \RuntimeException('Directory offline'); }
+      return $type === $actor->type && $id === $actor->id ? $actor : ($type === $context->actor->type && $id === $context->actor->id ? new \PdroLucas\FilamentAiWriter\Controls\ActorIdentity($type, $id, '<script>Admin</script>') : null);
+    });
+    $plugin->controls()->setBlocked($context, $actor, true, '<img src=x onerror=alert(1)>');
+    $plugin->controls()->setBlocked($context, $actor, false, 'Release');
+    $calls = [];
+    $page = \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\AiControlsPage::class)->call('showSection', 'activity')
+      ->assertSee('Target · target@example.test')->assertDontSeeHtml('<b>Target')->assertDontSeeHtml('<script>Admin</script>')
+      ->assertDontSeeHtml('<img src=x onerror=alert(1)>')->assertCountTableRecords(2);
+    $this->assertCount(2, $calls);
+    $broken = true;
+    $page->call('$refresh')->assertSee('target')->assertCountTableRecords(2);
+    $plugin->actorDirectoryUsing(fn () => [], fn () => null);
+    $page->call('$refresh')->assertSee('target')->assertCountTableRecords(2);
   }
 
   public function test_context_rejects_panel_guard_and_administrator_changes_and_forged_snapshot(): void
@@ -327,7 +643,7 @@ class AiControlsTest extends TestCase
     $credits->grant($context, $context->actor, 3, 'Temporary extra');
     $this->assertSame(5, $credits->ownBalance($context)['available']);
     \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\AiControlsPage::class)
-      ->assertSee('Credit policy updated')->assertSee('Extra credits granted')->assertSee('Available: 5');
+      ->call('showSection', 'activity')->assertSee('Credit policy updated')->assertSee('Extra credits granted');
     \Illuminate\Support\Facades\DB::unprepared("CREATE TEMP TRIGGER fail_credit_audit BEFORE INSERT ON filament_ai_writer_control_audit BEGIN SELECT RAISE(ABORT, 'audit failure'); END");
     try {
       $credits->reset($context, $context->actor, 'Reset');
@@ -512,6 +828,11 @@ class AiControlsTest extends TestCase
       $this->assertNull($plugin->abuse()->ownStatus($context)['refusal']);
       $plugin->abuse()->configure($context, ['failure_pause_seconds' => 100], 'Longer pause uses known recent failures');
       $this->assertSame('failure_pause', $plugin->abuse()->ownStatus($context)['refusal']);
+      $status = $plugin->abuse()->ownStatus($context);
+      $this->assertLessThan($status['failures']['paused_until'], $status['failures']['retry_at']);
+      config(['app.timezone' => 'America/Sao_Paulo']);
+      \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\MyAiCreditsPage::class)
+        ->assertSee(\Carbon\CarbonImmutable::parse($status['failures']['retry_at'], 'UTC')->setTimezone('America/Sao_Paulo')->format('M j, Y · H:i T'));
       \Carbon\CarbonImmutable::setTestNow($clock->addSeconds(102));
       $this->assertSame(1, $plugin->abuse()->ownStatus($context)['failures']['count']);
       $this->assertNull($plugin->abuse()->ownStatus($context)['refusal']);
@@ -610,7 +931,7 @@ class AiControlsTest extends TestCase
     $audit = $plugin->controls()->audit($context)->sole();
     $this->assertFalse($audit->before['rate_enabled']);
     $this->assertSame(2, $audit->after['rate_limit']);
-    \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\AiControlsPage::class)->assertSee('Abuse protections updated')->assertSee('Calls: 2');
+    \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\AiControlsPage::class)->call('showSection', 'activity')->assertSee('Abuse protections updated');
     \Illuminate\Support\Facades\DB::unprepared("CREATE TRIGGER reject_audit BEFORE INSERT ON filament_ai_writer_control_audit BEGIN SELECT RAISE(ABORT, 'audit failed'); END");
     try {
       $abuse->configure($context, ['rate_limit' => 3], 'Must roll back');

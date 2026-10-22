@@ -40,6 +40,22 @@ final class Controls
     return DB::table('filament_ai_writer_actor_blocks')->where('scope_key', $context->scopeKey())->where('actor_key', $actor->key())->exists();
   }
 
+  /** Current user's availability only; never accepts a directory target. */
+  public function ownStatus(ControlContext $context): array
+  {
+    $authorize = function () use ($context): void {
+      $plugin = AiWriterPlugin::get();
+      abort_unless($plugin->canUseAi() && $plugin->controlContext()->snapshot() === $context->snapshot(), 403);
+    };
+    $authorize();
+    $credits = app(\PdroLucas\FilamentAiWriter\Credits\Credits::class);
+    return $credits->connection()->transaction(function () use ($context, $authorize, $credits): array {
+      $credits->lockScope($context->scopeKey(), $context->scope);
+      $authorize();
+      return ['enabled' => $this->readEnabled($context), 'blocked' => $this->readBlocked($context, $context->actor)];
+    }, 3);
+  }
+
   /** Admission is resolved once on the server, outside the provider's HTTP call. */
   public function admit(): ControlContext
   {

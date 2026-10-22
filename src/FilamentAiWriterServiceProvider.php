@@ -29,11 +29,16 @@ class FilamentAiWriterServiceProvider extends ServiceProvider
 
   public function boot(): void
   {
+    \Livewire\Livewire::component('filament-ai-writer-credits', \PdroLucas\FilamentAiWriter\Livewire\OwnCreditsIndicator::class);
     if ($this->app->runningInConsole()) {
       $this->commands([\PdroLucas\FilamentAiWriter\Console\PruneUsageCommand::class, \PdroLucas\FilamentAiWriter\Console\RecoverOperationsCommand::class]);
     }
 
     $this->loadViewsFrom(__DIR__ . "/../resources/views", "filament-ai-writer");
+
+    $this->publishes([
+      __DIR__ . '/../resources/views' => resource_path('views/vendor/filament-ai-writer'),
+    ], 'filament-ai-writer-views');
 
     $this->publishesMigrations([
       __DIR__ . "/../database/migrations/2026_10_21_000001_create_ai_writer_usage_table.php" => database_path("migrations/2026_10_21_000001_create_ai_writer_usage_table.php"),
