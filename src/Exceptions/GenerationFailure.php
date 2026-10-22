@@ -10,6 +10,9 @@ final class GenerationFailure extends RuntimeException
   public const MESSAGES = [
     'disabled' => 'AI is disabled for this scope. Contact your administrator.',
     'expired' => 'This AI operation expired. Its result cannot be delivered; any reserved credit was released.',
+    'rate' => 'Your AI request frequency limit has been reached. Try again after the request window moves.',
+    'concurrency' => 'You already have the maximum number of AI generations in progress. Try again when one finishes.',
+    'failure_pause' => 'AI generation is temporarily paused after repeated failures. Try again after the pause ends.',
     'credits' => 'Your AI credits are exhausted. Contact your administrator.',
     'blocked' => 'Your AI access is blocked. Contact your administrator.',
     'controls' => 'AI access controls are unavailable. Contact your administrator; publish and run the plugin migrations before generating.',

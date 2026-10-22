@@ -434,6 +434,289 @@ class AiControlsTest extends TestCase
     $this->assertSame(1, $balance['available']);
   }
 
+  public function test_abuse_rate_uses_admissions_with_quotas_off_and_survives_usage_pruning_and_quota_reset(): void
+  {
+    $this->login();
+    $plugin = AiWriterPlugin::get();
+    $context = $plugin->controlContext();
+    $plugin->actorDirectoryUsing(fn () => [$context->actor], fn () => $context->actor);
+    $clock = \Carbon\CarbonImmutable::parse('2026-01-01 12:00:00', 'UTC');
+    \Carbon\CarbonImmutable::setTestNow($clock);
+    try {
+      $this->abuseHttp(['*' => Http::response([], 503)]);
+      $this->abuseGeneration('provider'); // Off-default failures are still admissions.
+      $this->abuseHttp(['*' => Http::response(['choices' => [['message' => ['content' => 'Generated'], 'finish_reason' => 'stop']]])]);
+      $this->abuseGeneration();
+      \Carbon\CarbonImmutable::setTestNow($clock->addDays(40));
+      $this->assertSame(2, app(\PdroLucas\FilamentAiWriter\Usage\UsagePruner::class)->run(1, 100)['deleted']);
+      $plugin->abuse()->configure($context, ['rate_enabled' => true, 'rate_limit' => 2, 'rate_window_seconds' => 86400 * 50], 'Activate against known history');
+      $plugin->credits()->configure($context, true, 5, 'manual', 'Enable credits');
+      $plugin->credits()->reset($context, $context->actor, 'Reset does not erase abuse');
+      $plugin->credits()->renew($context, 'Renew does not erase abuse');
+      $this->abuseHttp();
+      $this->abuseGeneration('rate');
+      Http::assertNothingSent();
+      $this->assertSame(2, $plugin->abuse()->ownStatus($context)['rate']['count']);
+      $this->assertSame(5, $plugin->credits()->ownBalance($context)['available']);
+      $plugin->abuse()->configure($context, ['rate_enabled' => false], 'Pause protection');
+      $plugin->abuse()->configure($context, ['rate_enabled' => true], 'Restore protection');
+      $this->abuseGeneration('rate');
+      $plugin->abuse()->configure($context, ['rate_enabled' => false, 'failure_enabled' => true, 'failure_limit' => 1, 'failure_window_seconds' => 86400 * 50, 'failure_pause_seconds' => 86400 * 50], 'Failure history survives pruning too');
+      $this->assertSame(1, $plugin->abuse()->ownStatus($context)['failures']['count']);
+      $this->abuseGeneration('failure_pause');
+      Http::assertNothingSent();
+      $plugin->abuse()->configure($context, ['rate_enabled' => true], 'Restore frequency');
+      \Carbon\CarbonImmutable::setTestNow($clock->addDays(50));
+      $this->abuseHttp(['*' => Http::response(['choices' => [['message' => ['content' => 'Generated'], 'finish_reason' => 'stop']]])]);
+      $this->abuseGeneration(); // Exact rolling boundary is excluded.
+      $this->assertSame(1, $plugin->abuse()->ownStatus($context)['rate']['count']);
+    } finally {
+      \Carbon\CarbonImmutable::setTestNow();
+    }
+  }
+
+  public function test_failure_window_activation_success_and_finite_cooldown(): void
+  {
+    $this->login();
+    $plugin = AiWriterPlugin::get();
+    $context = $plugin->controlContext();
+    $clock = \Carbon\CarbonImmutable::parse('2026-10-21 12:00:00', 'UTC');
+    \Carbon\CarbonImmutable::setTestNow($clock);
+    try {
+      $this->abuseHttp(['*' => Http::response([], 503)]);
+      $this->abuseGeneration('provider');
+      \Carbon\CarbonImmutable::setTestNow($clock->addSeconds(1));
+      $this->abuseHttp(['*' => Http::response(['choices' => [['message' => ['content' => 'Generated'], 'finish_reason' => 'stop']]])]);
+      $this->abuseGeneration();
+      \Carbon\CarbonImmutable::setTestNow($clock->addSeconds(2));
+      $this->abuseHttp(['*' => Http::response([], 503)]);
+      $this->abuseGeneration('provider');
+      $plugin->abuse()->configure($context, ['failure_enabled' => true, 'failure_limit' => 2, 'failure_window_seconds' => 100, 'failure_pause_seconds' => 10], 'Activate failure protection');
+      $status = $plugin->abuse()->ownStatus($context);
+      $this->assertSame(2, $status['failures']['count']);
+      $this->assertSame('2026-10-21 12:00:12.000000', $status['failures']['paused_until']);
+      $this->abuseHttp();
+      $this->abuseGeneration('failure_pause');
+      \Carbon\CarbonImmutable::setTestNow($clock->addSeconds(11));
+      $this->abuseGeneration('failure_pause');
+      $this->assertSame($status['failures'], $plugin->abuse()->ownStatus($context)['failures']);
+      Http::assertNothingSent();
+      \Carbon\CarbonImmutable::setTestNow($clock->addSeconds(12));
+      $this->abuseHttp(['*' => Http::response([], 503)]);
+      $this->abuseGeneration('provider'); // Cooldown ends despite threshold still met; new failure pauses again.
+      $this->assertSame('2026-10-21 12:00:22.000000', $plugin->abuse()->ownStatus($context)['failures']['paused_until']);
+      \Carbon\CarbonImmutable::setTestNow($clock->addSeconds(13));
+      $plugin->abuse()->configure($context, ['failure_window_seconds' => 2], 'Shorten rolling window');
+      $this->assertNull($plugin->abuse()->ownStatus($context)['refusal']);
+      $plugin->abuse()->configure($context, ['failure_window_seconds' => 100, 'failure_pause_seconds' => 1], 'Shorten pause');
+      $this->assertNull($plugin->abuse()->ownStatus($context)['refusal']);
+      $plugin->abuse()->configure($context, ['failure_pause_seconds' => 100], 'Longer pause uses known recent failures');
+      $this->assertSame('failure_pause', $plugin->abuse()->ownStatus($context)['refusal']);
+      \Carbon\CarbonImmutable::setTestNow($clock->addSeconds(102));
+      $this->assertSame(1, $plugin->abuse()->ownStatus($context)['failures']['count']);
+      $this->assertNull($plugin->abuse()->ownStatus($context)['refusal']);
+    } finally {
+      \Carbon\CarbonImmutable::setTestNow();
+    }
+  }
+
+  public function test_concurrency_recovery_releases_lease_and_uses_frozen_deadline_for_failure_pause(): void
+  {
+    $this->login();
+    $plugin = AiWriterPlugin::get();
+    $context = $plugin->controlContext();
+    $clock = \Carbon\CarbonImmutable::parse('2026-10-21 12:00:00', 'UTC');
+    \Carbon\CarbonImmutable::setTestNow($clock);
+    config(['filament-ai-writer.timeout' => 2, 'filament-ai-writer.recovery.margin_seconds' => 0]);
+    try {
+      $plugin->abuse()->configure($context, ['concurrency_enabled' => true, 'concurrency_limit' => 1,
+        'failure_enabled' => true, 'failure_limit' => 1, 'failure_window_seconds' => 100, 'failure_pause_seconds' => 10], 'Protect new admissions');
+      $operation = new \PdroLucas\FilamentAiWriter\Data\GenerationContext((string) \Illuminate\Support\Str::uuid(), $context->panelId, $context->actor->type, $context->actor->id, 'content');
+      $recorder = app(\PdroLucas\FilamentAiWriter\Usage\UsageRecorder::class);
+      $recorder->begin($operation, $context);
+      $this->abuseHttp();
+      $this->abuseGeneration('concurrency');
+      \Carbon\CarbonImmutable::setTestNow($clock->addSeconds(5));
+      $this->abuseGeneration('failure_pause'); // Inline recovery commits even on refusal.
+      $this->assertSame('recovered', \Illuminate\Support\Facades\DB::table('filament_ai_writer_operations')->value('status'));
+      $status = $plugin->abuse()->ownStatus($context);
+      $this->assertSame(0, $status['concurrency']['count']);
+      $this->assertSame('2026-10-21 12:00:12.000000', $status['failures']['paused_until']);
+      \Carbon\CarbonImmutable::setTestNow($clock->addSeconds(12));
+      $this->assertSame(0, $plugin->credits()->recoverExpiredOperations());
+      $this->assertNull($plugin->abuse()->ownStatus($context)['refusal']);
+      try {
+        $recorder->assertLive($operation);
+        $this->fail('Late worker must stay fenced');
+      } catch (GenerationFailure $failure) {
+        $this->assertSame('expired', $failure->failureCode);
+      }
+      Http::assertNothingSent();
+      $this->abuseHttp(['*' => Http::response(['choices' => [['message' => ['content' => 'Generated'], 'finish_reason' => 'stop']]])]);
+      $this->abuseGeneration();
+      $this->assertSame(1, $plugin->abuse()->ownStatus($context)['failures']['count']);
+    } finally {
+      \Carbon\CarbonImmutable::setTestNow();
+    }
+  }
+
+  public function test_abuse_limits_isolate_opaque_actor_types_and_scopes_and_preserve_admitted_delivery(): void
+  {
+    $this->login();
+    $plugin = AiWriterPlugin::get();
+    $scope = 'tenant:A';
+    $plugin->resolveScopeUsing(function () use (&$scope) { return $scope; });
+    $user = auth('workbench')->user();
+    $context = $plugin->controlContext();
+    $plugin->abuse()->configure($context, ['rate_enabled' => true, 'rate_limit' => 1, 'rate_window_seconds' => 100, 'concurrency_enabled' => true, 'concurrency_limit' => 1], 'Protect scope A');
+    $this->abuseHttp(function () use ($plugin, $context) {
+      $this->assertSame(0, \Illuminate\Support\Facades\DB::transactionLevel());
+      $this->assertSame(1, $plugin->abuse()->ownStatus($context)['concurrency']['count']);
+      $plugin->controls()->setEnabled($context, false, 'Admitted operation still delivers');
+      return Http::response(['choices' => [['message' => ['content' => 'Generated'], 'finish_reason' => 'stop']]]);
+    });
+    $this->abuseGeneration();
+    $plugin->controls()->setEnabled($context, true, 'Restore availability');
+    $this->abuseHttp();
+    $this->abuseGeneration('rate');
+    auth('workbench')->setUser(new \Illuminate\Auth\GenericUser(['id' => (string) $user->getAuthIdentifier()]));
+    $this->assertSame(0, $plugin->abuse()->ownStatus($plugin->controlContext())['rate']['count']);
+    $this->abuseHttp(['*' => Http::response(['choices' => [['message' => ['content' => 'Generated'], 'finish_reason' => 'stop']]])]);
+    $this->abuseGeneration();
+    auth('workbench')->setUser($user);
+    $scope = 'tenant:B';
+    $this->assertFalse($plugin->abuse()->policy($plugin->controlContext())['rate_enabled']);
+    $this->abuseGeneration();
+    $scope = 'tenant:A';
+    $this->assertSame(1, $plugin->abuse()->ownStatus($context)['rate']['count']);
+  }
+
+  public function test_abuse_configuration_permissions_validation_audit_rollback_and_own_status_context(): void
+  {
+    $this->login();
+    $plugin = AiWriterPlugin::get();
+    $context = $plugin->controlContext();
+    $abuse = $plugin->abuse();
+    foreach ([['rate_enabled' => true], ['concurrency_enabled' => true], ['failure_enabled' => true],
+      ['rate_limit' => 0], ['failure_pause_seconds' => '10'], ['rate_window_seconds' => 1.5], ['rate_limit' => 2147483648], ['unknown' => 1]] as $invalid) {
+      try {
+        $abuse->configure($context, $invalid, 'Invalid');
+        $this->fail('Must validate explicit thresholds');
+      } catch (\Illuminate\Validation\ValidationException) {
+        $this->assertFalse($abuse->policy($context)['rate_enabled']);
+      }
+    }
+    $abuse->configure($context, ['rate_enabled' => true, 'rate_limit' => 2, 'rate_window_seconds' => 60], 'Activate');
+    $audit = $plugin->controls()->audit($context)->sole();
+    $this->assertFalse($audit->before['rate_enabled']);
+    $this->assertSame(2, $audit->after['rate_limit']);
+    \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\AiControlsPage::class)->assertSee('Abuse protections updated')->assertSee('Calls: 2');
+    \Illuminate\Support\Facades\DB::unprepared("CREATE TRIGGER reject_audit BEFORE INSERT ON filament_ai_writer_control_audit BEGIN SELECT RAISE(ABORT, 'audit failed'); END");
+    try {
+      $abuse->configure($context, ['rate_limit' => 3], 'Must roll back');
+      $this->fail('Audit must be atomic');
+    } catch (\Illuminate\Database\QueryException) {
+      $this->assertSame(2, $abuse->policy($context)['rate_limit']);
+    }
+    \Illuminate\Support\Facades\DB::unprepared('DROP TRIGGER reject_audit');
+    try {
+      $abuse->configure($context, ['rate_enabled' => false], ' ');
+      $this->fail('Reason is mandatory');
+    } catch (\Illuminate\Validation\ValidationException) {
+      $this->assertTrue($abuse->policy($context)['rate_enabled']);
+    }
+    $plugin->actorDirectoryUsing(fn () => [], fn () => null);
+    try {
+      $abuse->status($context, $context->actor);
+      $this->fail('Admin status must resolve an available target');
+    } catch (\Illuminate\Validation\ValidationException) {
+      $this->assertTrue(true);
+    }
+    $plugin->authorizeUseAiUsing(fn () => false);
+    try {
+      $abuse->ownStatus($context);
+      $this->fail('Own status requires permission to use AI');
+    } catch (\Symfony\Component\HttpKernel\Exception\HttpException $error) {
+      $this->assertSame(403, $error->getStatusCode());
+    }
+    $plugin->authorizeUseAiUsing(fn () => true);
+    $plugin->authorizeManageUsing(fn () => false);
+    $this->assertSame(0, $abuse->ownStatus($context)['rate']['count']);
+    foreach ([fn () => $abuse->configure($context, ['rate_enabled' => false], 'Denied'), fn () => $abuse->policy($context), fn () => $abuse->status($context, $context->actor)] as $denied) {
+      try {
+        $denied();
+        $this->fail('Management permission is required');
+      } catch (\Symfony\Component\HttpKernel\Exception\HttpException $error) {
+        $this->assertSame(403, $error->getStatusCode());
+      }
+    }
+    $plugin->authorizeManageUsing(fn () => true);
+    \Illuminate\Support\Facades\DB::table('filament_ai_writer_policies')->update(['rate_limit' => null]);
+    $this->abuseHttp();
+    $this->abuseGeneration('configuration');
+    Http::assertNothingSent();
+    $plugin->resolveScopeUsing(fn () => 'different');
+    try {
+      $abuse->ownStatus($context);
+      $this->fail('Own status must revalidate frozen context');
+    } catch (\Symfony\Component\HttpKernel\Exception\HttpException $error) {
+      $this->assertSame(403, $error->getStatusCode());
+    }
+  }
+
+  public function test_abuse_decision_uses_one_locked_instant_when_clock_crosses_lease_deadline(): void
+  {
+    $this->login();
+    $plugin = AiWriterPlugin::get();
+    $context = $plugin->controlContext();
+    $plugin->actorDirectoryUsing(fn () => [$context->actor], fn () => $context->actor);
+    $clock = \Carbon\CarbonImmutable::parse('2026-10-21 12:00:00', 'UTC');
+    \Carbon\CarbonImmutable::setTestNow($clock);
+    config(['filament-ai-writer.timeout' => 2, 'filament-ai-writer.recovery.margin_seconds' => 0]);
+    try {
+      $plugin->abuse()->configure($context, ['concurrency_enabled' => true, 'concurrency_limit' => 1,
+        'failure_enabled' => true, 'failure_limit' => 1, 'failure_window_seconds' => 100, 'failure_pause_seconds' => 10], 'Protect lease boundary');
+      $operation = new \PdroLucas\FilamentAiWriter\Data\GenerationContext((string) \Illuminate\Support\Str::uuid(), $context->panelId, $context->actor->type, $context->actor->id, 'content');
+      app(\PdroLucas\FilamentAiWriter\Usage\UsageRecorder::class)->begin($operation, $context);
+      foreach (['own', 'admin', 'admission'] as $surface) {
+        $ticks = 0;
+        \Carbon\CarbonImmutable::setTestNow(function () use ($clock, &$ticks, $surface) {
+          return $clock->addSeconds(++$ticks <= ($surface === 'admission' ? 2 : 1) ? 1 : 3);
+        });
+        if ($surface === 'admission') {
+          $this->abuseHttp();
+          $this->abuseGeneration('concurrency');
+          Http::assertNothingSent();
+          $this->assertSame(1, \Illuminate\Support\Facades\DB::table('filament_ai_writer_operations')->count());
+        } else {
+          $status = $surface === 'own' ? $plugin->abuse()->ownStatus($context) : $plugin->abuse()->status($context, $context->actor);
+          $this->assertSame('concurrency', $status['refusal']);
+          $this->assertSame(1, $status['concurrency']['count']);
+        }
+      }
+      \Carbon\CarbonImmutable::setTestNow($clock->addSeconds(3));
+      $this->assertSame('failure_pause', $plugin->abuse()->ownStatus($context)['refusal']);
+    } finally {
+      \Carbon\CarbonImmutable::setTestNow();
+    }
+  }
+
+  private function abuseHttp(mixed $callback = null): void
+  {
+    Http::swap(new \Illuminate\Http\Client\Factory());
+    Http::fake($callback);
+  }
+
+  private function abuseGeneration(?string $expectedFailure = null): void
+  {
+    try {
+      AiWriterPlugin::get()->generation()->run('prompt', 'input', fn () => null, fn () => null, 'content');
+      $this->assertNull($expectedFailure, 'Expected admission/provider failure');
+    } catch (GenerationFailure $failure) {
+      $this->assertSame($expectedFailure, $failure->failureCode);
+    }
+  }
+
   private function login(): void
   {
     $this->seed(DatabaseSeeder::class);

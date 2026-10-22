@@ -98,11 +98,11 @@ $panel->plugin(AiWriterPlugin::make());
 
 The Laravel ServiceProvider is still auto-discovered, but discovery does not register a panel plugin. Actions used without registration display configuration guidance and do not contact the provider. Remove temporary `authorize()` or `beforeGenerate()` callbacks whose only purpose was to duplicate plugin checks; keep application-specific restrictions and generation hooks. Actions outside a current Filament panel are no longer supported.
 
-The plugin now records metadata-only usage history. An authorized current-panel statistics page is registered by the plugin. Opt-in retention is available through a maintenance command; administrative availability and user blocking are available as described below. Credit quotas are available through the server interface below; abuse controls and the complete credit UI remain pending.
+The plugin now records metadata-only usage history. An authorized current-panel statistics page is registered by the plugin. Opt-in retention is available through a maintenance command; administrative availability and user blocking are available as described below. Credit quotas and abuse protections are available through the server interfaces below; their complete administration and user-facing UI remains planned for stage 4.
 
 ## Administrative controls
 
-The plugin registers **AI Writer controls** at `ai-writer-controls` within each panel. Access and every subsequent read/write require `authorizeManageUsing()`; statistics permission, authentication, and permission to generate do not grant administration. Administrators can enable/disable AI, block/unblock individual users, and read the scoped audit history. A reason of up to 500 characters is required for each change. Credit policy, renewals and adjustments use the server interface below; the complete credit UI and abuse limits remain pending.
+The plugin registers **AI Writer controls** at `ai-writer-controls` within each panel. Access and every subsequent read/write require `authorizeManageUsing()`; statistics permission, authentication, and permission to generate do not grant administration. Administrators can enable/disable AI, block/unblock individual users, and read the scoped audit history. A reason of up to 500 characters is required for each change. Credit policy, renewals, adjustments and abuse protection settings use the server interfaces below; their complete UI remains planned for stage 4.
 
 AI is enabled when there is no persisted policy. Generation still requires the existing use permission and action authorization. `Generation::run()` checks the effective availability and actor block on the server before the provider is called, including direct callers and submissions from an already open action modal. Blocking an administrator's AI use does not revoke their management permission.
 
@@ -147,6 +147,38 @@ The ledger's optional `connection` config must resolve to the **same connection 
 Managed generation deadlines freeze the validated generation `timeout` plus `recovery.margin_seconds` (default **30 seconds**, configurable nonnegative integer) at admission. Positive timeout and margin accept integer configuration values or decimal integer strings up to 2,147,483,647 seconds; invalid configuration refuses admission. Changing settings later cannot extend an admitted operation. This execution deadline also fences quota-off generations. Admission, response receipt and delivery enforce it, even without a scheduler. A delivery callback that crosses the deadline is restored and not charged.
 
 Run `php artisan ai-writer:recover-operations` to release expired reservations left by interrupted workers; the host may schedule it explicitly. Recovery and delivery compete for the same scope lock. Recovery marks a permanent terminal tombstone and releases the original reservation once; late workers cannot deliver or debit again. Expiry does not prove zero remote cost. The first known late response may update allowlisted metadata in an existing expired usage row without changing its terminal status; it never recreates pruned history. Direct ledger-only operations have no managed execution deadline. Outcome uncertainty is preserved separately from known HTTP status, IDs and measurements: a late HTTP 503 can retain outcome_unknown=true while preserving its measured usage.
+
+### Abuse protections
+
+Publish/run migration `000004` before deploying these writers, with admissions, recovery workers and pruning paused during the source/schema cutover. It adds protection policy fields and indexes/backfills actor keys in durable operations; it does not run automatically. Existing scoped operations remain eligible history. Legacy records without a known scope cannot be assigned retroactive scope. Mixed old/new writers are unsupported.
+
+Frequency, concurrency and repeated-failure protection are independent, **off by default**, and apply with quotas off. The administrator supplies every enabled protection's thresholds; there are no default business limits. Configuration accepts partial updates, strict PHP booleans for flags and positive PHP integers up to 2,147,483,647 for counts/seconds. Invalid configuration fails closed; unknown fields and missing thresholds are rejected. Example values below are illustrative choices for the host's administrator:
+
+```php
+$abuse = $plugin->abuse();
+$abuse->configure($context, [
+    'rate_enabled' => true, 'rate_limit' => 10, 'rate_window_seconds' => 60,
+    'concurrency_enabled' => true, 'concurrency_limit' => 2,
+    'failure_enabled' => true, 'failure_limit' => 3,
+    'failure_window_seconds' => 300, 'failure_pause_seconds' => 60,
+], 'Initial protection policy');
+$policy = $abuse->policy($context); // Management permission and fresh server context.
+$mine = $abuse->ownStatus($context); // No target; canUseAi, no management/statistics permission.
+$selected = $abuse->status($context, $selectedActor); // Management + fresh actor directory lookup.
+$abuse->configure($context, ['rate_enabled' => false], 'Temporarily disable frequency enforcement');
+```
+
+Configuration changes and their real before/after `abuse_policy` audit event commit atomically, require a reason and revalidate management/context under the shared scope lock. The existing audit page renders these events; configuration forms and the user-facing status display belong to the next UI stage.
+
+Frequency counts **admitted** managed calls with `started_at > now - rate_window_seconds`, including failures and recoveries. Its timestamp is recorded at admission under the lock. Rejected calls do not create operations, reserve credits or reach the provider. Repeated operation UUIDs remain rejected after usage pruning. Concurrency counts `pending`/`received` operations with a valid frozen lease. Inline recovery releases expired original reservations and fences late workers before evaluating a new admission. Recovery and protection evaluation use one decision instant captured after the scope lock, avoiding a gap where a lease is neither live nor a recorded failure. HTTP runs outside the transaction.
+
+Failure events are terminal non-deliveries after managed admission (`failed` or `recovered`): provider/response errors, failed local delivery and expired execution. Each operation contributes at most once. Failed operations use `completed_at`; recovered operations use their frozen `deadline_at`, so delayed maintenance cannot create a fresh pause for an old expiry. Pre-admission refusals are excluded. Successful delivery **does not erase other recent failures**.
+
+Failure protection blocks only when the number of failures with event time `> now - failure_window_seconds` reaches the threshold **and** `latest_failure + failure_pause_seconds` is still in the future. That pause end is finite: status reads and refused retries never extend it. At its end a new call is allowed even if the failure threshold is still present; a new failed call can start another pause. Falling below the threshold as the rolling window moves also releases the pause, potentially sooner. For example, failures at seconds 0 and 2 with threshold 2, window 100 and pause 10 block until second 12; a success between those failures does not change that result.
+
+Enabling, disabling or editing protection preserves history, including calls/failures admitted while protection or quotas were off. Enabling can immediately enforce recent known events. Edits recalculate against the current window/threshold/pause: increasing the pause can block again for a recent failure; an event outside the current window never triggers a pause. Credit resets, renewal and usage retention do not remove this history. Durable operations/tombstones are intentionally not cleaned up in this stage. Availability/block/config changes affect new admissions; admitted calls retain their delivery rights and execution deadlines.
+
+Status returns `policy`, `rate` (`count`, `retry_at`), `concurrency` (`count`, `lease_ends_at`), `failures` (`count`, `paused_until`, `retry_at`) and `refusal` (`rate`, `concurrency`, `failure_pause` or null). All timestamps are UTC; `failures.retry_at` accounts for both the finite pause and rolling window release. `concurrency.lease_ends_at` is the earliest lease deadline, not a promised completion time or a guaranteed admission time when more than one protection applies. Counts with an unconfigured window are zero. Status concerns abuse only; availability and credits have their own APIs. The own-status API reveals only the freshly resolved caller's scope/type/id, including opaque identities; it accepts no target actor. Distinct safe `GenerationFailure` messages describe each protection refusal.
 
 ### Scope and identity
 

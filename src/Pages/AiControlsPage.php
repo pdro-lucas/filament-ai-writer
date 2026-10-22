@@ -152,6 +152,7 @@ class AiControlsPage extends Page implements HasTable
         TextColumn::make('action')->label('Change')->formatStateUsing(fn (ControlAudit $record): string => match ($record->action) {
           'availability' => $record->after['enabled'] ? 'AI enabled' : 'AI disabled',
           'block' => $record->after['blocked'] ? 'User blocked' : 'User unblocked',
+          'abuse_policy' => 'Abuse protections updated',
           'quota_policy' => 'Credit policy updated',
           'quota_limit' => 'User limit updated',
           'quota_extra' => 'Extra credits granted',
@@ -174,9 +175,13 @@ class AiControlsPage extends Page implements HasTable
     if ($action === 'block') {
       return $values['blocked'] ? 'Blocked' : 'Allowed';
     }
-    $labels = in_array($action, ['quota_policy', 'quota_renew'], true)
+    $labels = $action === 'abuse_policy'
+      ? ['rate_enabled' => 'Frequency', 'rate_limit' => 'Calls', 'rate_window_seconds' => 'Interval seconds',
+        'concurrency_enabled' => 'Concurrency', 'concurrency_limit' => 'In progress',
+        'failure_enabled' => 'Failure pause', 'failure_limit' => 'Failures', 'failure_window_seconds' => 'Failure window seconds', 'failure_pause_seconds' => 'Pause seconds']
+      : (in_array($action, ['quota_policy', 'quota_renew'], true)
       ? ['enabled' => 'Credits', 'limit' => 'Limit', 'renewal' => 'Renewal']
-      : ['limit' => 'Limit', 'extras' => 'Extras', 'consumed' => 'Used', 'reserved' => 'Reserved', 'available' => 'Available'];
+      : ['limit' => 'Limit', 'extras' => 'Extras', 'consumed' => 'Used', 'reserved' => 'Reserved', 'available' => 'Available']);
     $parts = [];
     foreach ($labels as $key => $label) {
       if (array_key_exists($key, $values)) {

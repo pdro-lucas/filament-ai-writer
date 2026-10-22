@@ -1,6 +1,6 @@
 # Administração de IA, créditos e proteção contra abuso
 
-Status: etapas 1 e 2 concluídas. Etapa 2 com Dique APPROVED FINAL, zero blockers e 16/16 hashes conferidos; suites Filament 4.15.3 e 5.10.3 verdes (146 testes/1072 assertions), probes reais MySQL 8.4.11 e Workbench build preservando a demo. PostgreSQL não exercitado; QA visual é do usuário. Proteção contra abuso (etapa 3) e experiência completa (etapa 4) permanecem pendentes. Relatório de implementação: `/tmp/filament-stage2-implementation.md`; revisão final: `/tmp/filament-stage2-source-review.md`.
+Status: etapas 1 e 2 concluídas. Etapa 2 com Dique APPROVED FINAL, zero blockers e 16/16 hashes conferidos; suites Filament 4.15.3 e 5.10.3 verdes (146 testes/1072 assertions), probes reais MySQL 8.4.11 e Workbench build preservando a demo. PostgreSQL não exercitado; QA visual é do usuário. Proteção contra abuso (etapa 3 core) concluída com Dique APPROVED FINAL (Standards0/Spec0,10/10hashes), suites Filament4/5 verdes (152 testes/1152 assertions) e probes concorrentes MySQL8.4.11; experiência completa (etapa 4 UI) permanece pendente. Relatório etapa3: `/tmp/filament-stage3-implementation.md`; revisão: `/tmp/filament-stage3-source-review.md`. Relatório de implementação: `/tmp/filament-stage2-implementation.md`; revisão final: `/tmp/filament-stage2-source-review.md`.
 
 ## Objetivo
 
@@ -95,6 +95,14 @@ Critério: último crédito sob concorrência, falhas, duplicatas, mudanças de 
 
 ### 3. Proteção contra abuso
 
+Implementação concluída e aprovada: `Abuse` expõe `configure(context, settings, reason)`, `policy(context)`, `ownStatus(context)` sem target e `status(context, actor)` administrativo com directory fresco. Flags `rate_enabled`, `concurrency_enabled`, `failure_enabled` off por padrão; limites/janelas/pausa são inteiros positivos explícitos, sem defaults de negócio. Migration 000004 publicável adiciona política e índices/actor keys nas operações duráveis; sem limpeza dessas operações nesta etapa.
+
+Frequência conta admissões efetivas por `started_at > now-window`, inclusive falhas, independente de quota/protection on/off. Simultaneidade conta pending/received com deadline válido. Recovery e avaliação compartilham um instante capturado após adquirir o scope lock; expiração não pode desaparecer entre os dois cálculos. Recusa não reserva nem gera HTTP; recovery inline commita mesmo quando a proteção recusa a nova operação.
+
+Falhas são não entregas terminais após admissão (failed/recovered), uma por operação. Failed usa completed_at, recovered usa deadline congelado em vez do instante de manutenção. Sucesso não remove outras falhas recentes. Pausa exige threshold de falhas dentro da janela e latest_failure+pause futuro. Ao vencer pausa admite mesmo com threshold presente; nova falha pode pausar de novo; recusas não estendem. Janela que reduz contagem abaixo do threshold libera antes. Ativação/alteração considera eventos conhecidos ainda na janela, inclusive off; aumentar pausa pode voltar a bloquear por evento recente. Reset/renew/off-on/pruning não apagam eventos.
+
+Configuração e auditoria abuse_policy before/after real compartilham transação e canManage/context fresco; ownStatus exige canUseAi e painel/guard/scope/ator atuais. Status fornece policy, counts próprios, rate.retry_at, concurrency.lease_ends_at, failures.paused_until/retry_at e refusal distinto. Deadline de lease é informativo, sem promessa de entrega/admissão. README contém contrato e exemplo completo; UI de configuração/status pertence à etapa 4.
+
 Implementar frequência, simultaneidade e pausa por falhas repetidas, com configuração administrativa. Esses controles operam independentemente da ativação de cotas e não desaparecem com a poda do histórico.
 
 Critério: chamadas paralelas e tentativas que falham não contornam a proteção; recusas não chamam o provider; a recuperação após a janela/pausa é verificável.
@@ -132,4 +140,4 @@ A entrega deve registrar comandos executados, cenários reais na Workbench, novo
 
 A memória histórica recuperada também recomenda reserva atômica antes do provider e liquidação idempotente. Essas recomendações foram comparadas com o código atual; os controles de quotas continuam pendentes.
 
-Decisão aprovada para etapa 3: falhas em janela configurável, sucesso não zera outras falhas recentes; thresholds, janela e cooldown administráveis, proteção off por padrão. Não implementado na etapa 2.
+Decisão aprovada para etapa 3: falhas em janela configurável, sucesso não zera outras falhas recentes; thresholds, janela e cooldown administráveis, proteção off por padrão. Implementado e aprovado na etapa 3 core; UI completa permanece na etapa 4.

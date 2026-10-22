@@ -39,7 +39,8 @@ final class Credits
     return $this->connection()->table(self::PREFIX . $table);
   }
 
-  private function lockScope(string $key, string $scope): object
+  /** Internal shared admission lock; caller must own a transaction. */
+  public function lockScope(string $key, string $scope): object
   {
     $this->table('policies')->insertOrIgnore(['scope_key' => $key, 'scope' => $scope, 'enabled' => true]);
     $policy = $this->table('policies')->where('scope_key', $key)->lockForUpdate()->first();
@@ -56,7 +57,7 @@ final class Credits
       if ($this->connection()->transactionLevel() !== 0) {
         throw new GenerationFailure('transaction');
       }
-      $this->connection()->transaction(function () use ($generation, $context, $begin): void {
+      $refusal = $this->connection()->transaction(function () use ($generation, $context, $begin): ?string {
         $balance = null;
         $deadline = null;
         if ($context !== null) {
@@ -64,9 +65,15 @@ final class Credits
             throw new GenerationFailure('controls');
           }
           $policy = $this->lockScope($context->scopeKey(), $context->scope);
+          $decisionAt = CarbonImmutable::now('UTC');
           AiWriterPlugin::get()->controls()->assertAdmission($context);
           if ($this->table('operations')->where('operation_id', $generation->operationId)->exists()) {
             throw new GenerationFailure('duplicate');
+          }
+          $this->recoverExpiredActor($context, $decisionAt);
+          $refusal = AiWriterPlugin::get()->abuse()->admissionFailure($policy, $context, $decisionAt);
+          if ($refusal !== null) {
+            return $refusal; // Commit recovery even when this admission is refused.
           }
           $deadline = $this->deadline();
           if ((bool) $policy->quota_enabled) {
@@ -80,13 +87,17 @@ final class Credits
         }
         $this->table('operations')->insert([
           'operation_id' => $generation->operationId, 'scope_key' => $context?->scopeKey(),
-          'guard' => $context?->guard, 'panel_id' => $generation->panelId,
+          'actor_key' => $context?->actor->key(), 'guard' => $context?->guard, 'panel_id' => $generation->panelId,
           'actor_type' => $generation->actorType, 'actor_id' => $generation->actorId,
           'field' => $generation->field, 'action_name' => $generation->actionName,
-          'balance_id' => $balance?->id, 'deadline_at' => $deadline?->format('Y-m-d H:i:s.u'), 'status' => 'pending', 'started_at' => $generation->startedAt,
+          'balance_id' => $balance?->id, 'deadline_at' => $deadline?->format('Y-m-d H:i:s.u'), 'status' => 'pending', 'started_at' => $context === null ? $generation->startedAt : CarbonImmutable::now('UTC')->format('Y-m-d H:i:s.u'),
         ]);
         $begin();
+        return null;
       }, 3);
+      if ($refusal !== null) {
+        throw new GenerationFailure($refusal);
+      }
     } catch (UniqueConstraintViolationException) {
       throw new GenerationFailure('duplicate');
     } catch (Throwable $error) {
@@ -156,7 +167,7 @@ final class Credits
           ]);
         }
         $this->table('operations')->where('operation_id', $context->operationId)->update([
-          'status' => $target, 'completed_at' => $target === 'received' ? null : CarbonImmutable::now('UTC'),
+          'status' => $target, 'completed_at' => $target === 'received' ? null : CarbonImmutable::now('UTC')->format('Y-m-d H:i:s.u'),
         ]);
         return true;
       }); // Never retry callbacks that mutate a field.
@@ -225,6 +236,15 @@ final class Credits
         }
       }, 'operation_id');
     return $count;
+  }
+
+  /** Internal: scope lock is already held; recover each original balance and operation. */
+  public function recoverExpiredActor(ControlContext $context, CarbonImmutable $decisionAt): void
+  {
+    $this->table('operations')->where('scope_key', $context->scopeKey())->where('actor_key', $context->actor->key())
+      ->where('actor_type', $context->actor->type)->where('actor_id', $context->actor->id)
+      ->whereIn('status', ['pending', 'received'])->where('deadline_at', '<=', $decisionAt->format('Y-m-d H:i:s.u'))
+      ->orderBy('operation_id')->pluck('operation_id')->each(fn ($id) => $this->recoverOperation($id));
   }
 
   private function recoverOperation(string $operationId): bool

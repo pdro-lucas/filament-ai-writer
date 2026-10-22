@@ -39,6 +39,7 @@ class FilamentAiWriterServiceProvider extends ServiceProvider
       __DIR__ . "/../database/migrations/2026_10_21_000001_create_ai_writer_usage_table.php" => database_path("migrations/2026_10_21_000001_create_ai_writer_usage_table.php"),
       __DIR__ . "/../database/migrations/2026_10_21_000002_create_ai_writer_controls_tables.php" => database_path("migrations/2026_10_21_000002_create_ai_writer_controls_tables.php"),
       __DIR__ . "/../database/migrations/2026_10_21_000003_create_ai_writer_credits_tables.php" => database_path("migrations/2026_10_21_000003_create_ai_writer_credits_tables.php"),
+      __DIR__ . "/../database/migrations/2026_10_21_000004_add_ai_writer_abuse_policy.php" => database_path("migrations/2026_10_21_000004_add_ai_writer_abuse_policy.php"),
     ], "filament-ai-writer-migrations");
 
     $this->publishes(
