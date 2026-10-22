@@ -22,7 +22,9 @@ use PdroLucas\FilamentAiWriter\Usage\UsageStatistics;
 
 class UsageStatisticsPage extends Page implements HasTable
 {
-  use InteractsWithTable;
+  use InteractsWithTable {
+    getTableFilterState as protected getRawTableFilterState;
+  }
 
   protected static ?string $title = 'AI Writer usage';
   protected static ?string $slug = 'ai-writer-usage';
@@ -31,7 +33,7 @@ class UsageStatisticsPage extends Page implements HasTable
   #[Locked]
   public string $panelId;
 
-  // Display state for the native select; actual dates remain authoritative.
+  // Server-derived menu display state; actual dates remain authoritative.
   public string $periodPreset = '7';
 
   public static function canAccess(): bool
@@ -98,8 +100,8 @@ class UsageStatisticsPage extends Page implements HasTable
       ])
       ->filters([
         Filter::make('period')->schema([
-          DatePicker::make('from')->label('From')->default(fn (): string => CarbonImmutable::now(config('app.timezone'))->subDays(6)->toDateString()),
-          DatePicker::make('until')->label('Through')->default(fn (): string => CarbonImmutable::now(config('app.timezone'))->toDateString()),
+          DatePicker::make('from')->label('From')->native(false)->format('Y-m-d')->closeOnDateSelection()->default(fn (): string => CarbonImmutable::now(config('app.timezone'))->subDays(6)->toDateString()),
+          DatePicker::make('until')->label('Through')->native(false)->format('Y-m-d')->closeOnDateSelection()->default(fn (): string => CarbonImmutable::now(config('app.timezone'))->toDateString()),
         ])->query(fn (Builder $query, array $data): Builder => $this->statistics()->filterPeriod($query, $data)),
         $this->metadataFilter('actor', 'User')
           ->query(fn (Builder $query, array $data): Builder => filled($data['value'] ?? null) ? $this->statistics()->filterActor($query, $data['value']) : $query),
@@ -107,6 +109,21 @@ class UsageStatisticsPage extends Page implements HasTable
           ->query(fn (Builder $query, array $data): Builder => $this->statistics()->filterResult($query, $data['value'] ?? null)),
       ])
       ->emptyStateHeading('No usage recorded for this panel and these filters');
+  }
+
+  public function getTableFilterState(string $name): ?array
+  {
+    $state = $this->getRawTableFilterState($name);
+    if ($name === 'period' && $state !== null) {
+      // Adapt only the picker's exact midnight representation; strict period validation owns parsing.
+      foreach (['from', 'until'] as $boundary) {
+        $value = $state[$boundary] ?? null;
+        if (is_string($value) && preg_match('/^\d{4}-\d{2}-\d{2} 00:00:00$/D', $value)) {
+          $state[$boundary] = substr($value, 0, 10);
+        }
+      }
+    }
+    return $state;
   }
 
   public function setPeriod(int $days): void
@@ -144,6 +161,7 @@ class UsageStatisticsPage extends Page implements HasTable
   {
     // Only visible table filters may affect cards or the independently mounted chart.
     $filters = array_intersect_key($this->tableFilters ?? [], array_flip(['period', 'actor', 'status']));
+    $filters['period'] = $this->getTableFilterState('period') ?? [];
     $today = CarbonImmutable::now(config('app.timezone', 'UTC'));
     $periodPreset = 'custom';
     foreach ([1, 7, 30] as $days) {

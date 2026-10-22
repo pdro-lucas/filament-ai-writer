@@ -5,7 +5,6 @@
     .ai-usage-toolbar, .ai-usage-controls { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem; }
     .ai-usage-toolbar { justify-content: space-between; }
     .ai-usage-muted { color: var(--ai-usage-muted); font-size: .75rem; overflow-wrap: anywhere; }
-    .ai-usage-period { min-width: 9rem; }
     .ai-usage-coverage summary:focus-visible { outline: 2px solid var(--primary-500); outline-offset: 3px; }
     .ai-usage-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .75rem; }
     .ai-usage-metrics > div { min-width: 0; padding: 1rem; border: 1px solid var(--ai-usage-line); border-radius: .625rem; background: var(--ai-usage-surface); box-shadow: 0 1px 2px rgb(0 0 0 / 3%); }
@@ -14,6 +13,13 @@
     .ai-usage-coverage { margin-top: .25rem; }
     .ai-usage-coverage summary { cursor: pointer; width: fit-content; min-height: 1.5rem; font-size: .75rem; color: var(--ai-usage-muted); }
     .ai-usage-popover { padding: 1rem; display: grid; gap: 1rem; }
+    .ai-usage-presets { display: grid; gap: .125rem; }
+    .ai-usage-filter-label { font-size: .875rem; font-weight: 500; margin-bottom: .375rem; }
+    .ai-usage-preset { display: flex; align-items: center; justify-content: space-between; gap: .5rem; width: 100%; min-height: 2.25rem; padding: .375rem .5rem; border-radius: .375rem; text-align: start; cursor: pointer; }
+    .ai-usage-preset:hover, .ai-usage-preset[aria-pressed="true"] { background: var(--ai-usage-line); }
+    .ai-usage-preset[aria-pressed="true"] { font-weight: 600; }
+    .ai-usage-preset:focus-visible { outline: 2px solid var(--primary-500); outline-offset: 2px; }
+    .ai-usage-preset-check { width: 1rem; height: 1rem; flex-shrink: 0; }
     .ai-usage-requests { min-width: 0; border: 1px solid var(--ai-usage-line); border-radius: .625rem; background: var(--ai-usage-surface); overflow: hidden; }
     .ai-usage-chart .fi-section, .ai-usage-history .fi-ta-ctn { border: 0; border-radius: 0; box-shadow: none; background: transparent; }
     .ai-usage-chart .fi-section-header { padding: .75rem 1rem .25rem; border: 0; }

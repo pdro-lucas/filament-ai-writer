@@ -13,38 +13,37 @@
         <div class="ai-usage-toolbar">
             <span class="ai-usage-muted">{{ $period['from'] ?? 'All history' }} — {{ $period['until'] ?? 'Today' }} · {{ $timezone }}</span>
             <div class="ai-usage-controls" aria-label="Usage filters">
-                <label for="ai-usage-period" class="ai-usage-muted">Period</label>
-                <x-filament::dropdown :menu="false" placement="bottom-end" shift width="xs"
-                    :wire:key="$this->getId() . '.usage.period'">
-                    <x-slot name="trigger">
-                        <div class="ai-usage-controls">
-                            <x-filament::input.wrapper class="ai-usage-period">
-                                <x-filament::input.select id="ai-usage-period" tabindex="0" x-model="$wire.periodPreset"
-                                    x-on:mousedown.stop="" x-on:keydown.stop="if ($event.key === 'Escape') close()"
-                                    x-on:change="if ($event.target.value === 'custom') { $nextTick(() => open($event)) } else { close(); $wire.setPeriod(Number($event.target.value)) }">
-                                    @foreach (['1' => 'Today', '7' => '7 days', '30' => '30 days', 'custom' => 'Custom range'] as $value => $label)
-                                        <option value="{{ $value }}" @selected((string) $value === $periodPreset)>{{ $label }}</option>
-                                    @endforeach
-                                </x-filament::input.select>
-                            </x-filament::input.wrapper>
-                            <x-filament::icon-button icon="heroicon-m-calendar-days" color="gray" size="sm"
-                                label="Edit custom dates" tooltip="Edit custom dates" x-cloak x-show="$wire.periodPreset === 'custom'" />
-                        </div>
-                    </x-slot>
-                    <div class="ai-usage-popover" role="group" aria-label="Custom date range">
-                        {{-- Render each group from the cached table schema once, keeping its original state path. --}}
-                        {{ $filterForm->getComponentByStatePath('period') }}
-                    </div>
-                </x-filament::dropdown>
                 <x-filament::dropdown :menu="false" placement="bottom-end" shift width="xs"
                     :wire:key="$this->getId() . '.usage.filters'">
                     <x-slot name="trigger">
                         <x-filament::button size="sm" color="gray" icon="heroicon-m-adjustments-horizontal">Filters</x-filament::button>
                     </x-slot>
-                    <div class="ai-usage-popover" role="group" aria-label="Usage filters">
+                    <div class="ai-usage-popover" role="group" aria-label="Usage filters" x-data="{ showCustom: false }">
+                        <div class="ai-usage-presets" role="group" aria-label="Period">
+                            <span class="ai-usage-filter-label">Period</span>
+                            @foreach (['1' => 'Today', '7' => '7 days', '30' => '30 days'] as $value => $label)
+                                <button type="button" class="ai-usage-preset" wire:click="setPeriod({{ $value }})"
+                                    x-on:click="showCustom = false"
+                                    x-bind:aria-pressed="!showCustom && $wire.periodPreset === '{{ $value }}'">
+                                    <span>{{ $label }}</span>
+                                    <x-filament::icon icon="heroicon-m-check" class="ai-usage-preset-check"
+                                        x-show="!showCustom && $wire.periodPreset === '{{ $value }}'" x-cloak />
+                                </button>
+                            @endforeach
+                            <button type="button" class="ai-usage-preset" x-on:click="showCustom = true"
+                                x-bind:aria-pressed="showCustom || $wire.periodPreset === 'custom'">
+                                <span>Custom range</span>
+                                <x-filament::icon icon="heroicon-m-check" class="ai-usage-preset-check"
+                                    x-show="showCustom || $wire.periodPreset === 'custom'" x-cloak />
+                            </button>
+                        </div>
+                        <div x-show="showCustom || $wire.periodPreset === 'custom'" x-cloak role="group" aria-label="Custom date range">
+                            {{-- Render each group from the cached table schema once, keeping its original state path. --}}
+                            {{ $filterForm->getComponentByStatePath('period') }}
+                        </div>
                         {{ $filterForm->getComponentByStatePath('actor') }}
                         {{ $filterForm->getComponentByStatePath('status') }}
-                        <div><x-filament::button size="sm" color="gray" wire:click="resetUsageFilters" x-on:click="close()">Reset filters</x-filament::button></div>
+                        <div><x-filament::button size="sm" color="gray" wire:click="resetUsageFilters" x-on:click="showCustom = false; close()">Reset filters</x-filament::button></div>
                     </div>
                 </x-filament::dropdown>
             </div>

@@ -87,7 +87,7 @@ class UsageStatisticsTest extends TestCase
       ->assertCanSeeTableRecords($records->clone()->whereKey($first)->get())
       ->assertCanNotSeeTableRecords($records->clone()->whereKey($second)->get());
     $this->assertSame(1, AiWriterPlugin::get()->statistics()->summary($page->instance()->getFilteredTableQuery())['attempts']);
-    $dashboard = AiWriterPlugin::get()->statistics()->dashboard($page->get('tableFilters'));
+    $dashboard = AiWriterPlugin::get()->statistics()->dashboard($page->viewData('filters'));
     $this->assertSame(1, $dashboard['attempts']);
     $this->assertSame('0.100000000001', $dashboard['provider_cost']);
     $this->assertSame([['label' => 'openai', 'delivered' => 1, 'failed' => 0, 'active' => 0]], $dashboard['charts']['providers']);
@@ -108,29 +108,45 @@ class UsageStatisticsTest extends TestCase
     $this->row('demo', ['actor_type' => 'DifferentActor', 'status' => 'pending']);
     $this->row('demo', ['status' => 'failed']);
     $page = \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\UsageStatisticsPage::class)->assertCountTableRecords(4);
-    $this->assertSame(['from' => '2026-10-15', 'until' => '2026-10-21'], $page->get('tableFilters')['period']);
+    $this->assertSame(['from' => '2026-10-15', 'until' => '2026-10-21'], $page->instance()->getTableFilterState('period'));
     $page->assertViewHas('periodPreset', '7');
     $page->filterTable('status', 'active')
       ->filterTable('actor', UsageStatistics::actorKey('HostActor', 'opaque-id'))->assertCountTableRecords(2);
     $service = AiWriterPlugin::get()->statistics();
-    $summary = $service->dashboard($page->get('tableFilters'));
+    $summary = $service->dashboard($page->viewData('filters'));
     $this->assertSame(2, $summary['attempts']);
     $this->assertSame(2, array_sum(array_column($summary['charts']['time'], 'active')));
     $page->call('setPeriod', 1)->assertCountTableRecords(1);
     $page->assertViewHas('periodPreset', '1');
-    $this->assertSame(1, $service->dashboard($page->get('tableFilters'))['attempts']);
+    $this->assertSame(1, $service->dashboard($page->viewData('filters'))['attempts']);
     $page->call('setPeriod', 30)->assertCountTableRecords(2);
     $page->assertViewHas('periodPreset', '30');
-    $page->filterTable('period', ['from' => '2026-10-15', 'until' => '2026-10-15'])->assertCountTableRecords(1);
+    // Match the JavaScript picker's internal state, not just preset date-only input.
+    $page->filterTable('period', ['from' => '2026-10-15 00:00:00', 'until' => '2026-10-15 00:00:00'])->assertCountTableRecords(1);
     $page->assertViewHas('periodPreset', 'custom');
-    $this->assertSame(1, $service->dashboard($page->get('tableFilters'))['attempts']);
+    $this->assertSame(1, $service->dashboard($page->viewData('filters'))['attempts']);
     $page->call('resetUsageFilters')->assertCountTableRecords(4);
     $page->assertViewHas('periodPreset', '7');
     $page->set('tableFilters.provider.value', 'PRIVATE-provider')
       ->set('tableFilters.model.value', 'PRIVATE-model')->assertCountTableRecords(4)
       ->assertViewHas('summary', fn (array $summary): bool => $summary['attempts'] === 4);
     $page->assertViewHas('filters', fn (array $filters): bool => !isset($filters['provider'], $filters['model']));
-    $this->assertSame(['from' => '2026-10-15', 'until' => '2026-10-21'], $page->get('tableFilters')['period']);
+    $this->assertSame(['from' => '2026-10-15', 'until' => '2026-10-21'], $page->instance()->getTableFilterState('period'));
+  }
+
+  public function test_page_period_boundary_rejects_malformed_picker_state_without_normalizing_it(): void
+  {
+    $this->login();
+    $page = \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\UsageStatisticsPage::class)->instance();
+    foreach (['2026-02-31', '2026-02-31 00:00:00', 'tomorrow', 'garbage', '2026-10-15 12:00:00', '2026-10-15T00:00:00Z', ['2026-10-15']] as $invalid) {
+      $page->tableFilters['period'] = ['from' => $invalid, 'until' => '2026-10-21'];
+      try {
+        $page->getFilteredTableQuery()->count();
+        $this->fail('Malformed date state must reach strict period validation.');
+      } catch (\Illuminate\Validation\ValidationException $exception) {
+        $this->assertArrayHasKey('period', $exception->errors());
+      }
+    }
   }
 
   public function test_chart_options_keep_no_motion_compatible_with_filament_initialization(): void
