@@ -81,7 +81,7 @@ class WriterDemoTest extends TestCase
     Http::assertNothingSent();
   }
 
-  #[DataProvider('permissionSources')]
+  #[DataProvider('revocationSources')]
   public function test_revoked_permission_blocks_mounted_modal_and_subsequent_silent_request(string $source): void
   {
     $this->signIn();
@@ -105,8 +105,13 @@ class WriterDemoTest extends TestCase
 
         if ($source === 'plugin') {
           $allowPlugin = false;
-        } else {
+        } elseif ($source === 'action') {
           $allowAction = false;
+        } elseif ($source === 'disabled') {
+          AiWriterPlugin::get()->controls()->setEnabled(AiWriterPlugin::get()->controlContext(), false, 'Maintenance');
+        } else {
+          $context = AiWriterPlugin::get()->controlContext();
+          AiWriterPlugin::get()->controls()->setBlocked($context, $context->actor, true, 'Hold');
         }
 
         $page->setActionData(['ai_input' => 'Write an introduction to Filament plugins.'])
@@ -217,6 +222,31 @@ class WriterDemoTest extends TestCase
     Http::assertNothingSent();
   }
 
+  public function test_notification_mailbox_survives_independent_workbench_requests(): void
+  {
+    $this->signIn();
+    $cachePath = sys_get_temp_dir() . '/ai-writer-notifications-' . bin2hex(random_bytes(8));
+    $previousPath = config('cache.stores.file.path');
+    $previousLockPath = config('cache.stores.file.lock_path');
+    try {
+      config(['cache.stores.file.path' => $cachePath, 'cache.stores.file.lock_path' => $cachePath]);
+      $this->app['cache']->forgetDriver('file');
+      // Minimal production transport: publish, then a fresh request reads the same session's mailbox.
+      Notification::make()->warning()->title('AI generation was not delivered')->body('Your AI access is blocked.')->send();
+      app(\Filament\Notifications\NotificationMailbox::class)->flush();
+      $this->app->forgetScopedInstances();
+      $this->app['cache']->forgetDriver(config('filament.cache_store') ?? config('cache.default'));
+      Livewire::test(\Filament\Notifications\Livewire\Notifications::class)
+        ->call('pullNotificationsFromSession')
+        ->assertSee('AI generation was not delivered')
+        ->assertSee('Your AI access is blocked.');
+    } finally {
+      $this->app['cache']->forgetDriver('file');
+      config(['cache.stores.file.path' => $previousPath, 'cache.stores.file.lock_path' => $previousLockPath]);
+      \Illuminate\Support\Facades\File::deleteDirectory($cachePath);
+    }
+  }
+
   public static function restrictedOutputs(): array
   {
     return [
@@ -249,6 +279,11 @@ class WriterDemoTest extends TestCase
       'silent' => ['ai_writer', 'content', []],
       'interactive' => ['ai_interactive', 'interactive_content', ['ai_input' => 'Write a short introduction to Filament.']],
     ];
+  }
+
+  public static function revocationSources(): array
+  {
+    return [...self::permissionSources(), 'scope disabled' => ['disabled'], 'actor blocked' => ['blocked']];
   }
 
   public static function permissionSources(): array

@@ -87,34 +87,57 @@ class UsageLedgerTest extends TestCase
     config(['filament-ai-writer.provider' => 'openai', 'filament-ai-writer.openai.api_key' => 'PRIVATE-key', 'filament-ai-writer.openai.model' => 'gpt-4o']);
   }
 
-  public function test_admission_is_durable_context_is_frozen_and_duplicate_operation_never_repeats_http(): void
+  #[DataProvider('admissionChanges')]
+  public function test_admitted_generation_finishes_with_frozen_context_and_later_requests_recheck_admission(?string $change, string $failureCode): void
   {
     $this->login();
     $actor = User::firstOrFail();
     $operation = (string) \Illuminate\Support\Str::uuid();
-    Http::fake(function () use ($actor) {
+    $plugin = AiWriterPlugin::get();
+    $context = $plugin->controlContext();
+    Http::fake(function () use ($actor, $plugin, $context, $change) {
       $this->assertSame(0, DB::transactionLevel());
       $this->assertSame('pending', UsageAttempt::query()->sole()->status);
       $this->assertSame((string) $actor->getKey(), UsageAttempt::query()->sole()->actor_id);
+      if ($change === 'disable') {
+        $plugin->controls()->setEnabled($context, false, 'Maintenance during generation');
+      } elseif ($change === 'block') {
+        $plugin->controls()->setBlocked($context, $context->actor, true, 'Hold during generation');
+      }
+      $this->assertSame(0, DB::transactionLevel());
       Filament::setCurrentPanel(\Filament\Panel::make()->id('isolated')->authGuard('web'));
       return Http::response($this->response(), 200, ['x-request-id' => 'request-id']);
     });
     $service = AiWriterPlugin::get()->generation();
     $deliveries = 0;
-    $service->run('prompt', 'input', function () use (&$deliveries) { $deliveries++; }, fn () => null, 'content', $operation);
+    $deliveredText = null;
+    $service->run('prompt', 'input', function (GenerateResult $result) use (&$deliveries, &$deliveredText) {
+      $deliveries++;
+      $deliveredText = $result->text;
+    }, fn () => null, 'content', $operation);
+    $this->assertSame('PRIVATE result', $deliveredText);
     $attempt = UsageAttempt::query()->sole();
     $this->assertSame('demo', $attempt->panel_id);
     $this->assertSame('delivered', $attempt->status);
     Filament::setCurrentPanel(Filament::getPanel('demo'));
     try {
-      $service->run('prompt', 'input', fn () => $this->fail('Duplicate delivery'), fn () => null, 'content', $operation);
-      $this->fail('Duplicate admission must fail');
+      $service->run('prompt', 'input', fn () => $this->fail('Unexpected delivery'), fn () => null, 'content', $change === null ? $operation : null);
+      $this->fail('Later admission must fail');
     } catch (GenerationFailure $failure) {
-      $this->assertSame('duplicate', $failure->failureCode);
+      $this->assertSame($failureCode, $failure->failureCode);
     }
     $this->assertSame(1, $deliveries);
     $this->assertSame(1, UsageAttempt::query()->count());
     Http::assertSentCount(1);
+  }
+
+  public static function admissionChanges(): array
+  {
+    return [
+      'duplicate operation' => [null, 'duplicate'],
+      'disabled during HTTP' => ['disable', 'disabled'],
+      'blocked during HTTP' => ['block', 'blocked'],
+    ];
   }
 
   public function test_recorder_finalization_is_idempotent_and_preserves_opaque_identity(): void

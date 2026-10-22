@@ -19,14 +19,14 @@ A Filament plugin for AI-assisted writing, with per-panel registration, host-def
 composer require pdro-lucas/filament-ai-writer
 ```
 
-The Laravel service provider is auto-discovered. Register the plugin explicitly in each panel and install its usage table before generating:
+The Laravel service provider is auto-discovered. Register the plugin explicitly in each panel and install its usage and controls tables before generating:
 
 ```bash
 php artisan vendor:publish --tag=filament-ai-writer-migrations
 php artisan migrate
 ```
 
-The package does not automatically run migrations. To customize the table name, publish the configuration and set `tables.usage` **before** running the migration; keep that name stable afterward. No changes to the host's user table are required.
+The package does not automatically run migrations. To customize the usage table name, publish the configuration and set `tables.usage` **before** running the migration; keep that name stable afterward. No changes to the host's user table are required.
 
 ## Configuration
 
@@ -98,7 +98,84 @@ $panel->plugin(AiWriterPlugin::make());
 
 The Laravel ServiceProvider is still auto-discovered, but discovery does not register a panel plugin. Actions used without registration display configuration guidance and do not contact the provider. Remove temporary `authorize()` or `beforeGenerate()` callbacks whose only purpose was to duplicate plugin checks; keep application-specific restrictions and generation hooks. Actions outside a current Filament panel are no longer supported.
 
-The plugin now records metadata-only usage history. An authorized current-panel statistics page is registered by the plugin. Opt-in retention is available through a maintenance command; no quotas or administration screens are included.
+The plugin now records metadata-only usage history. An authorized current-panel statistics page is registered by the plugin. Opt-in retention is available through a maintenance command; administrative availability and user blocking are available as described below. Quotas and abuse controls are not implemented.
+
+## Administrative controls
+
+The plugin registers **AI Writer controls** at `ai-writer-controls` within each panel. Access and every subsequent read/write require `authorizeManageUsing()`; statistics permission, authentication, and permission to generate do not grant administration. Administrators can enable/disable AI, block/unblock individual users, and read the scoped audit history. A reason of up to 500 characters is required for each change. There are no quotas, credit fields, renewals or abuse limits in this release.
+
+AI is enabled when there is no persisted policy. Generation still requires the existing use permission and action authorization. `Generation::run()` checks the effective availability and actor block on the server before the provider is called, including direct callers and submissions from an already open action modal. Blocking an administrator's AI use does not revoke their management permission.
+
+Disabling AI or blocking a user prevents **new admissions**. A generation already admitted before that change finishes normally: its in-flight provider request and valid result delivery are not cancelled or discarded by the change. Existing provider, storage and delivery failure handling still applies. A later generation attempt rechecks the current controls and is refused before another provider request. No database transaction is held during provider HTTP.
+
+Upgrading an existing installation requires publishing **new** migrations and running them before generating:
+
+```bash
+php artisan vendor:publish --tag=filament-ai-writer-migrations
+php artisan migrate
+```
+
+This adds `filament_ai_writer_policies`, `filament_ai_writer_actor_blocks`, and `filament_ai_writer_control_audit`. These tables belong to the plugin and do not change the host's users. The service provider never runs migrations automatically. Missing/inaccessible controls storage or a failed scope resolver refuses generation; there is no fallback that ignores stored policy. Controls and audit are independent of usage retention.
+
+### Scope and identity
+
+The default scope is the exact string `panel:<panel id>`. Actor identity is the authenticated object's PHP class plus its opaque authentication identifier, with integers normalized to strings. `1` and `'1'` identify the same actor of the same type; `'01'` is different. The plugin does not instantiate classes, find host models, or infer a users table from browser input. Scope and identity values must be valid nonempty UTF-8, at most 255 bytes, without control characters.
+
+A server-only resolver can explicitly share controls between panels or isolate tenants:
+
+```php
+AiWriterPlugin::make()
+    ->resolveScopeUsing(fn ($actor, $panel): string =>
+        'tenant:' . app(CurrentTenant::class)->identifier())
+    ->authorizeManageUsing(fn ($actor, $panel): bool =>
+        app(CurrentTenant::class)->canManageAi($actor));
+```
+
+`CurrentTenant` is an example host integration. The host must derive tenant context from trusted server state, authorize access to it, and return a stable, unambiguous scope key. A shared string deliberately shares both availability, blocks and audit across configured panels. Use separate plugin instances per panel, matching scope resolvers and explicit management authorization for every participating panel. The resolver does not grant permission: the host's authorization callback remains responsible for who may manage the resolved scope. Do not take a tenant/scope string directly from unvalidated request input.
+
+The management page freezes panel, guard, scope and administrator identity at mount, and revalidates them plus management authorization on subsequent requests and actions. A changed context is rejected with HTTP 403; open the page afresh after switching tenants or accounts. There is no global or cross-tenant selector. Runtime generation captures the current server context at admission; `canUseAi()` remains a permission check without policy storage reads.
+
+### Explicit actor directory
+
+Configure both callbacks together to manage an actor **before their first generation**. The callbacks run on the server and receive the resolved scope and current panel. Search returns iterable `ActorIdentity` values; resolve returns the exact requested identity or `null` when it is unknown or not manageable in that scope. Browser selection tokens contain identifiers only and confer no authority: resolve is called again before applying a block/unblock.
+
+This example belongs to a host application with a `User` model containing `name` and `email`; those fields and that class are not a requirement of the plugin:
+
+```php
+use App\Models\User;
+use PdroLucas\FilamentAiWriter\Controls\ActorIdentity;
+
+AiWriterPlugin::make()
+    ->authorizeManageUsing(fn ($actor, $panel): bool => /* host permission */ false)
+    ->actorDirectoryUsing(
+        search: fn (string $search, string $scope, $panel): array =>
+            User::query()
+                // Apply the host's tenant/visibility restrictions here.
+                ->where('name', 'like', '%' . $search . '%')
+                ->limit(50)->get()
+                ->map(fn (User $user): ActorIdentity => new ActorIdentity(
+                    User::class, $user->getAuthIdentifier(), $user->name,
+                ))->all(),
+        resolve: function (string $type, string $id, string $scope, $panel): ?ActorIdentity {
+            if ($type !== User::class) {
+                return null;
+            }
+            // Apply the same tenant/visibility restrictions here.
+            $user = User::query()->find($id);
+            return $user === null ? null : new ActorIdentity(
+                User::class, $user->getAuthIdentifier(), $user->name,
+            );
+        },
+    );
+```
+
+Supply actual host permission and identical scope restrictions in **both** callbacks. Search accepts at most 100 characters and retains at most 50 results; the host should also limit its underlying query. Labels are plain UTF-8 strings of at most 255 bytes, rendered with Filament's default escaping. Leave HTML labels disabled. Empty labels fall back to the opaque ID. Without a directory, the page explains that user search is not configured; availability and audit still work. No catalog is inferred from usage history or a host schema.
+
+### Persistence and audit
+
+Scope keys and actor tuple keys are SHA-256 hashes used for compact, case-sensitive unique indexes; actor hashes encode the JSON tuple `[type, normalized id]` to avoid delimiter ambiguity. Original scope, type and ID remain stored. Changes create the scope row through a unique insert, lock that row, and read the current `before` state inside the transaction. Updating availability or a block and appending its audit event share the same database transaction. An audit failure rolls back the change, including first-row creation. Repeating an already applied state is a no-op and produces no duplicate audit event.
+
+Audit records include the administrator type/ID, initiating panel/guard, scope, optional target actor, before/after state, UTC timestamp and reason. Prompts, generated text, provider keys and request payloads are never copied into the audit. Reasons should explain the administrative decision without including private content or secrets. History is scoped, authorized and paginated at 10, 25 or 50 records. The current automated suite exercises SQLite; row-lock/concurrency behavior on other database engines requires integration verification in the host's supported environment.
 
 ## Usage
 

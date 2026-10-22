@@ -8,6 +8,9 @@ use RuntimeException;
 final class GenerationFailure extends RuntimeException
 {
   public const MESSAGES = [
+    'disabled' => 'AI is disabled for this scope. Contact your administrator.',
+    'blocked' => 'Your AI access is blocked. Contact your administrator.',
+    'controls' => 'AI access controls are unavailable. Contact your administrator; publish and run the plugin migrations before generating.',
     'configuration' => 'AI Writer configuration is invalid. Check the provider, model, key and timeout settings.',
     'connection' => 'The provider response could not be confirmed. No automatic retry was made.',
     'authentication' => 'The provider rejected authentication. Contact your administrator.',
@@ -20,7 +23,7 @@ final class GenerationFailure extends RuntimeException
     'incomplete' => 'The generated text was incomplete. The original field was preserved.',
     'invalid_output' => 'The generated result was not valid for this field. The original field was preserved.',
     'transaction' => 'AI generation must run outside an existing database transaction so usage admission is durable.',
-    'storage' => 'Usage history is unavailable. Publish the filament-ai-writer-migrations and run migrations before generating. No unrecorded result was delivered.',
+    'storage' => 'AI Writer storage is unavailable. Publish the filament-ai-writer-migrations and run migrations before generating. No unrecorded result was delivered.',
     'duplicate' => 'This operation was already admitted. No new provider request was made.',
     'delivery' => 'The generated result could not be applied to the form.',
   ];

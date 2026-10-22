@@ -23,7 +23,9 @@ class Generation
     if (!AiWriterPlugin::get()->canUseAi()) {
       throw new AuthorizationException('You are not authorized to use AI Writer.');
     }
-    $context = GenerationContext::capture($field, $operationId, $actionName);
+    $admission = AiWriterPlugin::get()->controls()->admit();
+    $context = new GenerationContext($operationId ?? (string) \Illuminate\Support\Str::uuid(), $admission->panelId,
+      $admission->actor->type, $admission->actor->id, $field, $actionName);
     $this->recorder->begin($context);
     $result = null;
     $quote = null;

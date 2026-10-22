@@ -15,6 +15,8 @@ use Illuminate\Session\Middleware\StartSession;
 use Illuminate\View\Middleware\ShareErrorsFromSession;
 use PdroLucas\FilamentAiWriter\AiWriterPlugin;
 use Workbench\App\Pages\WriterDemo;
+use Workbench\App\Models\User;
+use PdroLucas\FilamentAiWriter\Controls\ActorIdentity;
 
 class DemoPanelProvider extends PanelProvider
 {
@@ -27,7 +29,19 @@ class DemoPanelProvider extends PanelProvider
       ->brandName('AI Writer Workbench')
       ->authGuard('workbench')
       ->login()
-      ->plugin(AiWriterPlugin::make()->authorizeViewStatisticsUsing(fn () => true))
+      ->plugin(AiWriterPlugin::make()
+        ->authorizeViewStatisticsUsing(fn () => true)
+        ->authorizeManageUsing(fn ($actor): bool => $actor instanceof User && $actor->email === 'demo@example.test')
+        // This directory belongs to the demo host; the plugin never queries its User model.
+        ->actorDirectoryUsing(
+          search: fn (string $search): array => User::query()->where(function ($query) use ($search): void {
+            $query->where('name', 'like', '%' . $search . '%')->orWhere('email', 'like', '%' . $search . '%');
+          })->limit(50)->get()->map(fn (User $user): ActorIdentity => new ActorIdentity(User::class, $user->getAuthIdentifier(), $user->name))->all(),
+          resolve: function (string $type, string $id): ?ActorIdentity {
+            $user = $type === User::class ? User::query()->find($id) : null;
+            return $user === null ? null : new ActorIdentity(User::class, $user->getAuthIdentifier(), $user->name);
+          },
+        ))
       ->pages([WriterDemo::class])
       ->middleware([
         EncryptCookies::class,

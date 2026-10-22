@@ -23,7 +23,8 @@ class WorkbenchServiceProvider extends ServiceProvider
       ],
       'auth.guards.workbench' => ['driver' => 'session', 'provider' => 'workbench'],
       'auth.providers.workbench' => ['driver' => 'eloquent', 'model' => User::class],
-      'cache.default' => 'array',
+      // Filament notification mailboxes must survive the next HTTP request.
+      'cache.default' => 'file',
       'session.driver' => 'file',
       'session.cookie' => 'ai_writer_workbench_session',
       'filament-ai-writer.provider' => 'openai',
