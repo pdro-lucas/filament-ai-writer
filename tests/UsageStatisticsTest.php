@@ -109,6 +109,7 @@ class UsageStatisticsTest extends TestCase
     $this->row('demo', ['status' => 'failed']);
     $page = \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\UsageStatisticsPage::class)->assertCountTableRecords(4);
     $this->assertSame(['from' => '2026-10-15', 'until' => '2026-10-21'], $page->get('tableFilters')['period']);
+    $page->assertViewHas('periodPreset', '7');
     $page->filterTable('status', 'active')
       ->filterTable('actor', UsageStatistics::actorKey('HostActor', 'opaque-id'))->assertCountTableRecords(2);
     $service = AiWriterPlugin::get()->statistics();
@@ -116,16 +117,33 @@ class UsageStatisticsTest extends TestCase
     $this->assertSame(2, $summary['attempts']);
     $this->assertSame(2, array_sum(array_column($summary['charts']['time'], 'active')));
     $page->call('setPeriod', 1)->assertCountTableRecords(1);
+    $page->assertViewHas('periodPreset', '1');
     $this->assertSame(1, $service->dashboard($page->get('tableFilters'))['attempts']);
     $page->call('setPeriod', 30)->assertCountTableRecords(2);
+    $page->assertViewHas('periodPreset', '30');
     $page->filterTable('period', ['from' => '2026-10-15', 'until' => '2026-10-15'])->assertCountTableRecords(1);
+    $page->assertViewHas('periodPreset', 'custom');
     $this->assertSame(1, $service->dashboard($page->get('tableFilters'))['attempts']);
     $page->call('resetUsageFilters')->assertCountTableRecords(4);
+    $page->assertViewHas('periodPreset', '7');
     $page->set('tableFilters.provider.value', 'PRIVATE-provider')
       ->set('tableFilters.model.value', 'PRIVATE-model')->assertCountTableRecords(4)
       ->assertViewHas('summary', fn (array $summary): bool => $summary['attempts'] === 4);
     $page->assertViewHas('filters', fn (array $filters): bool => !isset($filters['provider'], $filters['model']));
     $this->assertSame(['from' => '2026-10-15', 'until' => '2026-10-21'], $page->get('tableFilters')['period']);
+  }
+
+  public function test_chart_options_keep_no_motion_compatible_with_filament_initialization(): void
+  {
+    $this->login();
+    $chart = \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Widgets\UsageCountChart::class, ['panelId' => 'demo']);
+    preg_match("/options:\\s*JSON\\.parse\\('([^']+)'\\)/", html_entity_decode($chart->html(), ENT_QUOTES), $matches);
+    $this->assertNotEmpty($matches, 'The widget must send options to the Filament chart component.');
+    $options = json_decode(json_decode('"' . $matches[1] . '"', true, 512, JSON_THROW_ON_ERROR), true, 512, JSON_THROW_ON_ERROR);
+    // Filament initializes options.animation.duration before creating the Chart.js instance.
+    // A boolean false is valid in Chart.js alone, but throws in that initialization path.
+    $this->assertIsArray($options['animation']);
+    $this->assertSame(0, $options['animation']['duration']);
   }
 
   public function test_request_drawer_uses_panel_scoped_ids_and_preserves_historic_model_and_exact_cost(): void

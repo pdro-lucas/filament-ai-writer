@@ -31,6 +31,9 @@ class UsageStatisticsPage extends Page implements HasTable
   #[Locked]
   public string $panelId;
 
+  // Display state for the native select; actual dates remain authoritative.
+  public string $periodPreset = '7';
+
   public static function canAccess(): bool
   {
     return UsageStatistics::canAccess();
@@ -66,7 +69,6 @@ class UsageStatisticsPage extends Page implements HasTable
       ->paginated([10, 25, 50])
       ->defaultPaginationPageOption(25)
       ->deferFilters(false)
-      ->heading('Requests')
       ->filtersLayout(FiltersLayout::Hidden)
       ->filtersFormColumns(1)
       ->recordAction('details')
@@ -142,11 +144,22 @@ class UsageStatisticsPage extends Page implements HasTable
   {
     // Only visible table filters may affect cards or the independently mounted chart.
     $filters = array_intersect_key($this->tableFilters ?? [], array_flip(['period', 'actor', 'status']));
+    $today = CarbonImmutable::now(config('app.timezone', 'UTC'));
+    $periodPreset = 'custom';
+    foreach ([1, 7, 30] as $days) {
+      if (($filters['period']['from'] ?? null) === $today->subDays($days - 1)->toDateString()
+        && ($filters['period']['until'] ?? null) === $today->toDateString()) {
+        $periodPreset = (string) $days;
+        break;
+      }
+    }
+    $this->periodPreset = $periodPreset;
     return [
       'summary' => $this->statistics()->dashboard($filters),
       'filters' => $filters,
       'panel' => $this->panelId,
       'timezone' => config('app.timezone', 'UTC'),
+      'periodPreset' => $periodPreset,
     ];
   }
 }

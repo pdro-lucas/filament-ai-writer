@@ -12,7 +12,7 @@ class UsageCountChart extends ChartWidget
 {
   protected static bool $isLazy = false;
   protected ?string $pollingInterval = null;
-  protected ?string $maxHeight = '140px';
+  protected ?string $maxHeight = '120px';
 
   #[Locked]
   public string $panelId = '';
@@ -61,7 +61,7 @@ class UsageCountChart extends ChartWidget
       'datasets' => [[
         'label' => 'Requests',
         'data' => array_map(fn (array $row): int => $row['delivered'] + $row['failed'] + $row['active'], $rows),
-        'backgroundColor' => '#16a34a', 'borderRadius' => 2, 'maxBarThickness' => 48,
+        'backgroundColor' => '#16a34a', 'borderWidth' => 0, 'borderRadius' => 2, 'maxBarThickness' => 48,
       ]],
     ];
   }
@@ -86,11 +86,12 @@ class UsageCountChart extends ChartWidget
   {
     return [
       'plugins' => ['legend' => ['display' => false]],
-      'animation' => false,
+      // Filament initializes animation.duration before handing options to Chart.js.
+      'animation' => ['duration' => 0],
       'maintainAspectRatio' => false,
       'scales' => [
-        'x' => ['stacked' => true, 'beginAtZero' => true, 'ticks' => ['precision' => 0]],
-        'y' => ['stacked' => true, 'beginAtZero' => true, 'ticks' => ['precision' => 0]],
+        'x' => ['grid' => ['display' => false], 'ticks' => ['maxTicksLimit' => 8, 'maxRotation' => 0]],
+        'y' => ['beginAtZero' => true, 'ticks' => ['precision' => 0, 'maxTicksLimit' => 3]],
       ],
     ];
   }

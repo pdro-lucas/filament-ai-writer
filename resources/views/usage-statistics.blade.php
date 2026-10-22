@@ -8,23 +8,24 @@
         $period = $filters['period'] ?? [];
     @endphp
     @include('filament-ai-writer::usage-styles')
-    <div class="ai-usage">
+    <div class="ai-usage" x-data="{ filtersOpen: @js($periodPreset === 'custom') }">
         <div class="ai-usage-toolbar">
             <span class="ai-usage-muted">{{ $period['from'] ?? 'All history' }} — {{ $period['until'] ?? 'Today' }} · {{ $timezone }}</span>
             <div class="ai-usage-controls" aria-label="Usage filters">
-                @foreach ([1 => 'Today', 7 => '7 days', 30 => '30 days'] as $days => $label)
-                    <x-filament::button size="sm" color="gray" wire:click="setPeriod({{ $days }})">{{ $label }}</x-filament::button>
-                @endforeach
-                <x-filament::dropdown width="sm" placement="bottom-end">
-                    <x-slot name="trigger">
-                        <x-filament::button size="sm" color="gray" icon="heroicon-m-adjustments-horizontal">Filters / Custom range</x-filament::button>
-                    </x-slot>
-                    <div class="ai-usage-filter-form">
-                        {{ $this->getTableFiltersForm() }}
-                        <x-filament::button size="sm" color="gray" wire:click="resetUsageFilters">Reset filters</x-filament::button>
-                    </div>
-                </x-filament::dropdown>
+                <label for="ai-usage-period" class="ai-usage-muted">Period</label>
+                <select id="ai-usage-period" x-model="$wire.periodPreset" class="ai-usage-period" aria-controls="ai-usage-filters"
+                    x-on:change="if ($event.target.value === 'custom') { filtersOpen = true } else { $wire.setPeriod(Number($event.target.value)) }">
+                    @foreach (['1' => 'Today', '7' => '7 days', '30' => '30 days', 'custom' => 'Custom range'] as $value => $label)
+                        <option value="{{ $value }}" @selected((string) $value === $periodPreset)>{{ $label }}</option>
+                    @endforeach
+                </select>
+                <x-filament::button size="sm" color="gray" icon="heroicon-m-adjustments-horizontal"
+                    x-on:click="filtersOpen = ! filtersOpen" x-bind:aria-expanded="filtersOpen" aria-controls="ai-usage-filters">Filters</x-filament::button>
             </div>
+        </div>
+        <div id="ai-usage-filters" class="ai-usage-filter-form" x-show="filtersOpen" x-cloak role="region" aria-label="Usage filters">
+            {{ $this->getTableFiltersForm() }}
+            <div><x-filament::button size="sm" color="gray" wire:click="resetUsageFilters">Reset filters</x-filament::button></div>
         </div>
 
         <dl class="ai-usage-metrics" aria-label="Usage overview">
@@ -52,13 +53,12 @@
             </div>
         </dl>
 
-        <div class="ai-usage-chart">
-            @livewire(\PdroLucas\FilamentAiWriter\Widgets\UsageCountChart::class, ['panelId' => $panel, 'sharedFilters' => $filters], key('usage-' . $panel . '-' . hash('sha256', json_encode($filters))))
-            <details class="ai-usage-chart-data">
-                <summary>Request counts</summary>
-                <div class="ai-usage-scroll" role="region" aria-label="Request counts by date" tabindex="0">
+        <div class="ai-usage-requests">
+            <div class="ai-usage-chart">
+                @livewire(\PdroLucas\FilamentAiWriter\Widgets\UsageCountChart::class, ['panelId' => $panel, 'sharedFilters' => $filters], key('usage-' . $panel . '-' . hash('sha256', json_encode($filters))))
+                <div class="ai-usage-chart-data">
                     <table class="ai-usage-data">
-                        <caption>{{ $summary['charts']['bucket_days'] }}-day buckets · {{ $timezone }}</caption>
+                        <caption>Request counts by date · {{ $summary['charts']['bucket_days'] }}-day buckets · {{ $timezone }}</caption>
                         <thead><tr><th scope="col">Date</th><th scope="col">Requests</th></tr></thead>
                         <tbody>
                             @forelse ($summary['charts']['time'] as $row)
@@ -69,10 +69,10 @@
                         </tbody>
                     </table>
                 </div>
-            </details>
-        </div>
-        <div class="ai-usage-history" role="region" aria-label="Request history">
-            {{ $this->table }}
+            </div>
+            <div class="ai-usage-history" role="region" aria-label="Request history">
+                {{ $this->table }}
+            </div>
         </div>
     </div>
 </x-filament-panels::page>
