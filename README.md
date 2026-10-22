@@ -7,6 +7,10 @@ A Filament plugin for AI-assisted writing, with per-panel registration, host-def
 
 > **Status: Beta** — This package is in active development. APIs may change and issues can occur.
 
+## Documentation
+
+Start with [installation](#installation), [panel registration](#panel-plugin) and the [writing examples](#usage). See the [integration guide](docs/integration.md) for administration, scoped directories, custom action placement, credits and presentation. Reporting and maintenance are covered in [statistics](#current-panel-statistics) and [retention](#opt-in-usage-retention).
+
 ## Requirements
 
 - PHP 8.2+
@@ -88,161 +92,53 @@ Callbacks receive the authenticated actor from that panel's guard and the panel 
 
 The action enforces registration, the panel's use permission and any host action-level authorization on the server before running generation hooks or contacting the provider. Interactive and silent actions use the same checks. Permissions are checked again on later requests, including submission of a modal opened before permission was revoked. A host `->authorize(true)` cannot bypass plugin authorization; host action authorization can further restrict access.
 
-### Beta upgrade
+## Controls, credits and integration
 
-Registration is now required in **every panel** that uses `AiWriterAction`:
+The plugin ships three native panel pages:
 
-```php
-$panel->plugin(AiWriterPlugin::make());
-```
+| Surface | Required permission | Purpose |
+| --- | --- | --- |
+| **AI Writer controls** (`ai-writer-controls`) | `authorizeManageUsing()` | Settings for availability, quotas and abuse protections; Users with a reusable Manage AI modal; paginated Activity audit |
+| **My AI credits** (`my-ai-credits`) | `authorizeUseAiUsing()` | The authenticated actor's availability, balance and protection status |
+| **AI Writer usage** (`ai-writer-usage`) | `authorizeViewStatisticsUsing()` | Read-only metadata statistics for the current panel |
 
-The Laravel ServiceProvider is still auto-discovered, but discovery does not register a panel plugin. Actions used without registration display configuration guidance and do not contact the provider. Remove temporary `authorize()` or `beforeGenerate()` callbacks whose only purpose was to duplicate plugin checks; keep application-specific restrictions and generation hooks. Actions outside a current Filament panel are no longer supported.
+AI starts enabled, with quotas and all abuse protections off. No business limits are supplied. Management changes require a reason of at most 500 characters and write an audit entry atomically. Disabling AI or blocking an actor prevents **new admissions**; already admitted generations retain their delivery rights and execution deadlines. Quotas off does not override availability, blocks or permissions, and enabling quotas never retroactively charges a free generation.
 
-The plugin now records metadata-only usage history. An authorized current-panel statistics page is registered by the plugin. Opt-in retention is available through a maintenance command; administrative availability and user blocking are available as described below. Credit quotas and abuse protections are available through the server interfaces below; their complete administration and user-facing UI remains planned for stage 4.
+Configure an explicit, scoped actor directory to manage users before their first generation. The plugin never infers a host User model, tenant column, display name or email. Return `ActorIdentity` with a human label in both search and resolve callbacks. The resolver remains required when embedding Manage AI in your own Resource with the built-in Users tab off.
 
-## Administrative controls
-
-The plugin registers **AI Writer controls** at `ai-writer-controls` within each panel. Access and every subsequent read/write require `authorizeManageUsing()`; statistics permission, authentication, and permission to generate do not grant administration. Administrators can enable/disable AI, block/unblock individual users, and read the scoped audit history. A reason of up to 500 characters is required for each change. Credit policy, renewals, adjustments and abuse protection settings use the server interfaces below; their complete UI remains planned for stage 4.
-
-AI is enabled when there is no persisted policy. Generation still requires the existing use permission and action authorization. `Generation::run()` checks the effective availability and actor block on the server before the provider is called, including direct callers and submissions from an already open action modal. Blocking an administrator's AI use does not revoke their management permission.
-
-Disabling AI or blocking a user prevents **new admissions**. A generation already admitted before that change finishes normally: its in-flight provider request and valid result delivery are not cancelled or discarded by the change. Existing provider, storage and delivery failure handling still applies. A later generation attempt rechecks the current controls and is refused before another provider request. No database transaction is held during provider HTTP.
-
-Upgrading an existing installation requires publishing **new** migrations and running them before generating:
-
-```bash
-php artisan vendor:publish --tag=filament-ai-writer-migrations
-php artisan migrate
-```
-
-This adds `filament_ai_writer_policies`, `filament_ai_writer_actor_blocks`, and `filament_ai_writer_control_audit`. These tables belong to the plugin and do not change the host's users. The service provider never runs migrations automatically. Missing/inaccessible controls storage or a failed scope resolver refuses generation; there is no fallback that ignores stored policy. Controls and audit are independent of usage retention.
-
-### Credits and upgrade cutover
-
-Before applying migration `000003`, stop generation admissions and scheduled usage pruning, drain all old `pending`/`received` operations, then stop old generation workers. Publish/run the new migration and deploy the new writers before resuming admissions and pruning. Mixed-version rolling deployment is unsupported. The migration refuses unresolved legacy attempts and copies all remaining operation identities into durable tombstones without inventing historical scope/guard. Operation IDs already removed before upgrading cannot be reconstructed.
-
-Credit state is stored in plugin-owned periods, actor settings, balances and operation records. Usage retention never restores credits or makes an operation ID reusable. These durable records are intentionally not pruned. Quotas default to off; there is no default business limit. Explicitly configure a valid integer limit and `manual`, `daily`, `weekly` or `monthly` renewal before enabling them:
+Choose what appears on each panel instance:
 
 ```php
-$plugin = AiWriterPlugin::get();
-$context = $plugin->controlContext(); // Resolve on the server, never from request input.
-$credits = $plugin->credits();
-$credits->configure($context, true, 100, 'monthly', 'Initial allocation');
-$credits->setLimit($context, $selectedActor, 150, 'Individual allocation'); // null removes override
-$credits->grant($context, $selectedActor, 20, 'Extra credits for this period');
-$credits->reset($context, $selectedActor, 'Reset this user quota');
-$credits->renew($context, 'Start a new period for the scope');
-$adminBalance = $credits->balance($context, $selectedActor);
-$myBalance = $credits->ownBalance($context); // No target actor; canUseAi, no admin/statistics permission.
-```
-
-Administration rechecks the current context, management permission and explicit actor directory. Every adjustment requires a reason and commits together with its actual before/after audit entry. `policy($context)` reads quota settings. `ownBalance` validates the fresh actor/panel/guard/scope snapshot and cannot read another user's balance. Balance arrays contain `enabled`, effective `limit`, `individual_limit`, `extras`, `consumed`, `reserved`, `available`, `period_id`, `balance_id` and UTC `renews_at` (null for manual). Quotas off is indicated by `enabled=false`; an unconfigured limit/available is null.
-
-Limits and individual extra grants accept strict PHP integers, 0–2,147,483,647 (grants must be positive); a period's cumulative extras have the same technical bound. Counters use bigint and preserve historical consumption/reservations even when they exceed a reduced limit. Available is clamped at zero. Individual limits do not change the scope calendar. Extras and reset are different audited actions; reset starts a new balance without extras. Unused credits do not roll over. Day cuts are local midnight, weeks Monday midnight and months day 1 in the application timezone. A calendar edit preserves the current finite end; the new calendar takes effect when that period closes. Manual→calendar schedules the next cut of the new calendar while preserving the current balance until then.
-
-Each generation freezes whether it reserves a credit. Enabling quotas during a free generation never adds retroactive charges; off/on in the same period preserves already counted consumption. Renewal/reset keeps in-flight reservations in their original balance; a valid late completion debits that balance, leaving the new period unchanged. Failures release once; delivery and debit commit together, with field restoration on rollback. Credits are not a financial cost ceiling.
-
-The ledger's optional `connection` config must resolve to the **same connection instance** as the default controls/audit connection. A separate named connection is rejected even if it points at the same database, because separate transactions cannot guarantee atomic delivery. UsageRecorder also checks its actual query connection. Public `begin` and `delivered` reject outer transactions. `begin($generationContext)` is a ledger-only interface with durable deduplication and no credit admission; provider integrations must call `generation()->run()` to apply controls and quotas. Delivery uses the frozen operation scope/balance, without resolving the current tenant again.
-
-Managed generation deadlines freeze the validated generation `timeout` plus `recovery.margin_seconds` (default **30 seconds**, configurable nonnegative integer) at admission. Positive timeout and margin accept integer configuration values or decimal integer strings up to 2,147,483,647 seconds; invalid configuration refuses admission. Changing settings later cannot extend an admitted operation. This execution deadline also fences quota-off generations. Admission, response receipt and delivery enforce it, even without a scheduler. A delivery callback that crosses the deadline is restored and not charged.
-
-Run `php artisan ai-writer:recover-operations` to release expired reservations left by interrupted workers; the host may schedule it explicitly. Recovery and delivery compete for the same scope lock. Recovery marks a permanent terminal tombstone and releases the original reservation once; late workers cannot deliver or debit again. Expiry does not prove zero remote cost. The first known late response may update allowlisted metadata in an existing expired usage row without changing its terminal status; it never recreates pruned history. Direct ledger-only operations have no managed execution deadline. Outcome uncertainty is preserved separately from known HTTP status, IDs and measurements: a late HTTP 503 can retain outcome_unknown=true while preserving its measured usage.
-
-### Abuse protections
-
-Publish/run migration `000004` before deploying these writers, with admissions, recovery workers and pruning paused during the source/schema cutover. It adds protection policy fields and indexes/backfills actor keys in durable operations; it does not run automatically. Existing scoped operations remain eligible history. Legacy records without a known scope cannot be assigned retroactive scope. Mixed old/new writers are unsupported.
-
-Frequency, concurrency and repeated-failure protection are independent, **off by default**, and apply with quotas off. The administrator supplies every enabled protection's thresholds; there are no default business limits. Configuration accepts partial updates, strict PHP booleans for flags and positive PHP integers up to 2,147,483,647 for counts/seconds. Invalid configuration fails closed; unknown fields and missing thresholds are rejected. Example values below are illustrative choices for the host's administrator:
-
-```php
-$abuse = $plugin->abuse();
-$abuse->configure($context, [
-    'rate_enabled' => true, 'rate_limit' => 10, 'rate_window_seconds' => 60,
-    'concurrency_enabled' => true, 'concurrency_limit' => 2,
-    'failure_enabled' => true, 'failure_limit' => 3,
-    'failure_window_seconds' => 300, 'failure_pause_seconds' => 60,
-], 'Initial protection policy');
-$policy = $abuse->policy($context); // Management permission and fresh server context.
-$mine = $abuse->ownStatus($context); // No target; canUseAi, no management/statistics permission.
-$selected = $abuse->status($context, $selectedActor); // Management + fresh actor directory lookup.
-$abuse->configure($context, ['rate_enabled' => false], 'Temporarily disable frequency enforcement');
-```
-
-Configuration changes and their real before/after `abuse_policy` audit event commit atomically, require a reason and revalidate management/context under the shared scope lock. The existing audit page renders these events; configuration forms and the user-facing status display belong to the next UI stage.
-
-Frequency counts **admitted** managed calls with `started_at > now - rate_window_seconds`, including failures and recoveries. Its timestamp is recorded at admission under the lock. Rejected calls do not create operations, reserve credits or reach the provider. Repeated operation UUIDs remain rejected after usage pruning. Concurrency counts `pending`/`received` operations with a valid frozen lease. Inline recovery releases expired original reservations and fences late workers before evaluating a new admission. Recovery and protection evaluation use one decision instant captured after the scope lock, avoiding a gap where a lease is neither live nor a recorded failure. HTTP runs outside the transaction.
-
-Failure events are terminal non-deliveries after managed admission (`failed` or `recovered`): provider/response errors, failed local delivery and expired execution. Each operation contributes at most once. Failed operations use `completed_at`; recovered operations use their frozen `deadline_at`, so delayed maintenance cannot create a fresh pause for an old expiry. Pre-admission refusals are excluded. Successful delivery **does not erase other recent failures**.
-
-Failure protection blocks only when the number of failures with event time `> now - failure_window_seconds` reaches the threshold **and** `latest_failure + failure_pause_seconds` is still in the future. That pause end is finite: status reads and refused retries never extend it. At its end a new call is allowed even if the failure threshold is still present; a new failed call can start another pause. Falling below the threshold as the rolling window moves also releases the pause, potentially sooner. For example, failures at seconds 0 and 2 with threshold 2, window 100 and pause 10 block until second 12; a success between those failures does not change that result.
-
-Enabling, disabling or editing protection preserves history, including calls/failures admitted while protection or quotas were off. Enabling can immediately enforce recent known events. Edits recalculate against the current window/threshold/pause: increasing the pause can block again for a recent failure; an event outside the current window never triggers a pause. Credit resets, renewal and usage retention do not remove this history. Durable operations/tombstones are intentionally not cleaned up in this stage. Availability/block/config changes affect new admissions; admitted calls retain their delivery rights and execution deadlines.
-
-Status returns `policy`, `rate` (`count`, `retry_at`), `concurrency` (`count`, `lease_ends_at`), `failures` (`count`, `paused_until`, `retry_at`) and `refusal` (`rate`, `concurrency`, `failure_pause` or null). All timestamps are UTC; `failures.retry_at` accounts for both the finite pause and rolling window release. `concurrency.lease_ends_at` is the earliest lease deadline, not a promised completion time or a guaranteed admission time when more than one protection applies. Counts with an unconfigured window are zero. Status concerns abuse only; availability and credits have their own APIs. The own-status API reveals only the freshly resolved caller's scope/type/id, including opaque identities; it accepts no target actor. Distinct safe `GenerationFailure` messages describe each protection refusal.
-
-### Scope and identity
-
-The default scope is the exact string `panel:<panel id>`. Actor identity is the authenticated object's PHP class plus its opaque authentication identifier, with integers normalized to strings. `1` and `'1'` identify the same actor of the same type; `'01'` is different. The plugin does not instantiate classes, find host models, or infer a users table from browser input. Scope and identity values must be valid nonempty UTF-8, at most 255 bytes, without control characters.
-
-A server-only resolver can explicitly share controls between panels or isolate tenants:
-
-```php
-AiWriterPlugin::make()
-    ->resolveScopeUsing(fn ($actor, $panel): string =>
-        'tenant:' . app(CurrentTenant::class)->identifier())
-    ->authorizeManageUsing(fn ($actor, $panel): bool =>
-        app(CurrentTenant::class)->canManageAi($actor));
-```
-
-`CurrentTenant` is an example host integration. The host must derive tenant context from trusted server state, authorize access to it, and return a stable, unambiguous scope key. A shared string deliberately shares both availability, blocks and audit across configured panels. Use separate plugin instances per panel, matching scope resolvers and explicit management authorization for every participating panel. The resolver does not grant permission: the host's authorization callback remains responsible for who may manage the resolved scope. Do not take a tenant/scope string directly from unvalidated request input.
-
-The management page freezes panel, guard, scope and administrator identity at mount, and revalidates them plus management authorization on subsequent requests and actions. A changed context is rejected with HTTP 403; open the page afresh after switching tenants or accounts. There is no global or cross-tenant selector. Runtime generation captures the current server context at admission; `canUseAi()` remains a permission check without policy storage reads.
-
-### Explicit actor directory
-
-Configure both callbacks together to manage an actor **before their first generation**. The callbacks run on the server and receive the resolved scope and current panel. Search returns iterable `ActorIdentity` values; resolve returns the exact requested identity or `null` when it is unknown or not manageable in that scope. Browser selection tokens contain identifiers only and confer no authority: resolve is called again before applying a block/unblock.
-
-This example belongs to a host application with a `User` model containing `name` and `email`; those fields and that class are not a requirement of the plugin:
-
-```php
-use App\Models\User;
-use PdroLucas\FilamentAiWriter\Controls\ActorIdentity;
+use PdroLucas\FilamentAiWriter\AiWriterPlugin;
 
 AiWriterPlugin::make()
-    ->authorizeManageUsing(fn ($actor, $panel): bool => /* host permission */ false)
-    ->actorDirectoryUsing(
-        search: fn (string $search, string $scope, $panel): array =>
-            User::query()
-                // Apply the host's tenant/visibility restrictions here.
-                ->where('name', 'like', '%' . $search . '%')
-                ->limit(50)->get()
-                ->map(fn (User $user): ActorIdentity => new ActorIdentity(
-                    User::class, $user->getAuthIdentifier(), $user->name,
-                ))->all(),
-        resolve: function (string $type, string $id, string $scope, $panel): ?ActorIdentity {
-            if ($type !== User::class) {
-                return null;
-            }
-            // Apply the same tenant/visibility restrictions here.
-            $user = User::query()->find($id);
-            return $user === null ? null : new ActorIdentity(
-                User::class, $user->getAuthIdentifier(), $user->name,
-            );
-        },
-    );
+    ->usersTab(false)          // Keep Settings/Activity; manage users in your Resource.
+    ->creditsInTopbar(false);  // Keep the personal credit page; hide its topbar indicator.
 ```
 
-Supply actual host permission and identical scope restrictions in **both** callbacks. Search accepts at most 100 characters and retains at most 50 results; the host should also limit its underlying query. Labels are plain UTF-8 strings of at most 255 bytes, rendered with Filament's default escaping. Leave HTML labels disabled. Empty labels fall back to the opaque ID. Without a directory, the page explains that user search is not configured; availability and audit still work. No catalog is inferred from usage history or a host schema.
+These options do not revoke permissions. Authorization callbacks enforce access on the server, including later Livewire requests. AI availability, quotas, abuse protections, navigation visibility and retention are separate controls.
 
-### Persistence and audit
+The [integration guide](docs/integration.md) provides:
 
-Scope keys and actor tuple keys are SHA-256 hashes used for compact, case-sensitive unique indexes; actor hashes encode the JSON tuple `[type, normalized id]` to avoid delimiter ambiguity. Original scope, type and ID remain stored. Changes create the scope row through a unique insert, lock that row, and read the current `before` state inside the transaction. Updating availability or a block and appending its audit event share the same database transaction. An audit failure rolls back the change, including first-row creation. Repeating an already applied state is a no-op and produces no duplicate audit event.
+- [Complete panel setup and a scoped actor directory](docs/integration.md#panel-setup-and-a-scoped-actor-directory).
+- [Disable options and navigation-only customization](docs/integration.md#choose-what-to-disable).
+- [Manage AI in Resource tables, record headers and custom pages](docs/integration.md#manage-ai-in-your-own-surfaces).
+- [Writer actions in field suffixes and schema section headers](docs/integration.md#place-the-writing-action).
+- [Own-credit APIs, native schema embedding and topbar refresh](docs/integration.md#show-personal-credit-status).
+- [Themes, view overrides and page subclasses](docs/integration.md#customize-presentation).
+- [Quota, abuse, deployment and recovery contracts](docs/integration.md#credits-deployment-and-recovery).
 
-Audit records include the administrator type/ID, initiating panel/guard, scope, optional target actor, before/after state, UTC timestamp and reason. Prompts, generated text, provider keys and request payloads are never copied into the audit. Reasons should explain the administrative decision without including private content or secrets. History is scoped, authorized and paginated at 10, 25 or 50 records. The current automated suite exercises SQLite; row-lock/concurrency behavior on other database engines requires integration verification in the host's supported environment.
+### Upgrading an existing installation
+
+Register the plugin in every panel that uses writer actions. Service-provider discovery does not register a panel plugin. Remove temporary `authorize()` or `beforeGenerate()` callbacks that only duplicated plugin checks; retain application-specific restrictions. Actions outside a current Filament panel are unsupported.
+
+Publish **new** migrations and run them before generating. The package never migrates automatically and requires no host user-table changes. Missing controls storage or a failing scope resolver refuses generation rather than bypassing stored policy.
+
+For existing installations, migrations `000003` (credits) and `000004` (abuse) require a coordinated source/schema cutover. Pause admissions, recovery workers and pruning; drain old pending/received operations and stop old writers before migrating and deploying the new writers. Mixed-version rolling deployment is unsupported. Follow the [cutover details](docs/integration.md#credits-deployment-and-recovery) before resuming traffic.
 
 ## Usage
 
-Import the action and attach it to any Filament form field using `hintAction` or `suffixAction`.
+Import the action and attach it to a Filament field using `hintAction`, or `suffixAction` on a field that supports affixes. For other placements, see the [native form examples](docs/integration.md#place-the-writing-action).
 
 ```php
 use PdroLucas\FilamentAiWriter\Actions\AiWriterAction;
@@ -685,94 +581,3 @@ Before contributing, please ensure your changes follow the existing code style a
 ## License
 
 This project is open-sourced under the [MIT license](LICENSE.md).
-
-### Controls and personal credits
-
-The plugin registers **AI Writer controls** (`ai-writer-controls`) for `canManage()` and **My AI credits** (`my-ai-credits`) for `canUseAi()`. Own credits need neither management nor statistics permission and always use the authenticated actor, guard and current scope. Generation rechecks admission on the server.
-
-Settings uses native Filament aside Sections for availability, credits and each protection. Forms edit inline; saving asks for a reason and confirms the settings. Thresholds must be explicit integers. Extras, individual reset and global renewal are separate audited actions. Users uses a native searchable table with at most50 directory matches and a reusable Manage AI modal. Only an opened user's detail loads balance/status. Activity shows native paginated audit records with dates, administrator, user, action and reason. Internal before/after snapshots remain stored and are not displayed.
-
-Supply a human `ActorIdentity::label` in both directory callbacks, such as `name . ' · ' . email` when your host owns those fields. Workbench demonstrates this. The plugin never infers a User model or email column. IDs are fallback labels only, without routine secondary IDs or class names. Activity memoizes distinct scoped identities on the current page; removed users or a failing resolver fall back to IDs. Labels and reasons are escaped.
-
-### Use your existing Resource or table
-
-Disable only the built-in Users task per plugin instance:
-
-```php
-AiWriterPlugin::make()
-    ->usersTab(false)
-    ->actorDirectoryUsing(
-        search: fn () => [], // No built-in search needed in this host.
-        resolve: fn (string $type, string $id, string $scope) =>
-            $directory->resolveManageableActor($type, $id, $scope),
-    );
-```
-
-Settings and Activity remain available. `usersTab(false)` rejects forged Users requests too; it does not change permissions or disable the scoped resolver. The resolver must return the requested `ActorIdentity` or null, scoped to actors this administrator can manage. It remains required for host actions even when search returns no results.
-
-Use the same native action in a table, Resource record page or ordinary Filament page. The callback maps a host record to an explicit identity; no plugin administration page or copied domain logic is required:
-
-```php
-use PdroLucas\FilamentAiWriter\Actions\ManageAiUserAction;
-use PdroLucas\FilamentAiWriter\Controls\ActorIdentity;
-
-$table->recordActions([
-    ManageAiUserAction::make()->actorUsing(fn ($record): ActorIdentity =>
-        new ActorIdentity(HostMember::class, $record->getKey(), $record->displayLabel())
-    ),
-]);
-
-// In a Resource record page's getHeaderActions():
-return [ManageAiUserAction::make()->actorUsing(fn (): ActorIdentity =>
-    new ActorIdentity(HostMember::class, $this->getRecord()->getKey(), $this->getRecord()->displayLabel())
-)];
-```
-
-On an ordinary Filament page, expose the action from a method and render it as a normal Filament action. Plain Livewire hosts need Filament's standard HasActions/HasSchemas setup. No plugin-specific trait or properties are needed.
-
-Manage AI opens a native compact modal with one human identity, access/credit fields and separate Block/Unblock, limit/default, extra-credit and reset confirmations. Server mount authenticates the host identity with the directory and seals purpose, component, context and target using Laravel Crypt. Reads and mutations validate the envelope against fresh panel/guard/scope/admin context and resolve the actor again. Child confirmations have their own purpose. Browser plaintext actor/context arguments cannot establish authority or redirect an open confirmation. Non-authorization host callback failures return a safe unavailable/validation state; authorization exceptions are preserved.
-
-`Schemas\AiCreditStatus::components($balance, $abuse, $availability)` exposes the native status/credit presentation for hosts already using the authorized public APIs. It accepts their snapshots (`$availability` has `enabled`/`blocked`) and does not authorize arbitrary data. The built-in own page uses target-free reads; ManageAiUserAction handles administrative reads itself.
-
-### Topbar credits
-
-A native Sparkles button before the current panel's user menu shows the authenticated user's available credits and links to that instance's default/custom My AI credits page. It requires `canUseAi()`, never management. With quotas off it shows **Unlimited**, with **Credits are off** as the tooltip; retained balances are not presented as spendable. Storage failures show **Credits unavailable** without breaking the page. Guests, denied users, other panels and changed contexts cannot see stale balances.
-
-The hook is attached to the plugin's panel and checks that panel when rendered. The Livewire indicator locks its initial server context and uses own APIs only, without a user directory. It refreshes on the native `ai-writer-credits-changed` event emitted after delivered writer actions or successful administrative UI changes. No polling or custom JavaScript is used. Remote sessions and direct service calls do not broadcast browser events; a normal page refresh retrieves their changes. A host with another credit control may opt out or emit that same refresh event after its own successful flow:
-
-```php
-AiWriterPlugin::make()->creditsInTopbar(false);
-```
-
-### Customize native presentation
-
-Filament owns colors, borders, radii, inputs, tabs and modal styles. The plugin page wrapper is transparent; it does not impose a separate palette. Use your Filament theme for visual styling. Plugin CSS only sets layout gap/minimum width and left-aligned navigation. The inherited layout token works without `!important`:
-
-```css
-:root { --ai-writer-controls-gap: 1rem; }
-/* Optional host override, scoped to this plugin; no override is shipped by default. */
-.ai-controls[data-ai-controls="admin"] .fi-section { box-shadow: none; }
-```
-
-Stable page hooks: `.ai-controls`, `.ai-controls-nav` and `[data-ai-controls]` with values `admin`, `settings`, `users`, `activity`, `own-credits`, `credits-indicator`; native table/status aliases `.ai-controls-directory`, `.ai-controls-list`, `.ai-controls-ledger`, `.ai-controls-meta`, `.ai-controls-status` and its `data-state="available|paused"`. Palette variables from early UI4 drafts are not mapped onto native components. Any optional color rules belong in the host theme/CSS, explicitly scoped by these hooks.
-
-Laravel namespaced views and partials remain overridable. Copy only the view you need into `resources/views/vendor/filament-ai-writer`, for example `controls/balance.blade.php` to customize the built-in own page. That partial receives `$balance`, `$abuse`, `$enabled`, `$blocked` and renders the shared native schema. ManageAiUserAction calls AiCreditStatus directly and does not render that Blade partial; its presentation can be extended in a ManageAiUserAction subclass while keeping inherited guards. Other partials are `controls/settings`, `controls/users` and `controls/styles`; full pages are `ai-controls`, `my-ai-credits`; the indicator views are `credits-indicator` and `credits-indicator-hook`. Keep Blade escaping and server authorization intact. Publish views for reference with:
-
-```bash
-php artisan vendor:publish --tag=filament-ai-writer-views
-```
-
-For PHP presentation extensions, configure concrete subclasses before registering the plugin:
-
-```php
-class TeamAiControls extends \PdroLucas\FilamentAiWriter\Pages\AiControlsPage
-{
-    protected static ?string $title = 'Team AI controls';
-}
-
-AiWriterPlugin::make()
-    ->controlsPage(TeamAiControls::class)
-    ->creditsPage(\App\Filament\Pages\MyCredits::class); // extends MyAiCreditsPage
-```
-
-Setters stay local to that instance and reject unrelated/abstract classes. The topbar uses the registered credit-page class for its URL. Preserve inherited permissions, mount/hydrate context checks and public Controls/Credits/Abuse seams when extending lifecycle or behavior.
