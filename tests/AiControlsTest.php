@@ -444,40 +444,78 @@ class AiControlsTest extends TestCase
   public function test_inline_settings_validate_raw_integers_and_enable_only_explicit_thresholds(): void
   {
     $this->login();
-    $plugin = AiWriterPlugin::get();
-    $context = $plugin->controlContext();
-    $page = \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\AiControlsPage::class);
-    foreach (['1.5', '1e3', '2147483648', '-1'] as $invalid) {
-      $page->fillForm(['enabled' => true, 'limit' => $invalid, 'renewal' => 'manual'], 'creditForm')
-        ->call('confirmSettings', 'credit')->assertHasErrors(['creditData.limit']);
+    // Testable does not merge Filament partial responses into its HTML.
+    $stopForcingRender = \Livewire\Livewire::listen('call', function ($component): void {
+      app(\Filament\Support\Livewire\Partials\PartialsComponentHook::class)->forceRender($component);
+    });
+    try {
+      $plugin = AiWriterPlugin::get();
+      $context = $plugin->controlContext();
+      $page = \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\AiControlsPage::class);
+      foreach (['1.5', '1e3', '2147483648', '-1'] as $invalid) {
+        $page->fillForm(['enabled' => true, 'limit' => $invalid, 'renewal' => 'manual'], 'creditForm')
+          ->call('confirmSettings', 'credit')->assertHasErrors(['creditData.limit']);
+      }
+      $this->assertFalse($plugin->credits()->policy($context)['enabled']);
+      $this->assertSame(0, $plugin->controls()->audit($context)->count());
+      $page = \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\AiControlsPage::class);
+      // The modal host must exist before Filament sends a partial modal response.
+      $this->assertSame(1, substr_count($page->html(), 'wire:partial="action-modals"'));
+      // Send deferred field updates and the literal rendered button call in one request.
+      $page->update(
+        [['method' => 'mountAction', 'params' => ['saveCredit', [], ['schemaComponent' => 'settings.creditActions']]]],
+        ['creditData.enabled' => true, 'creditData.limit' => '1200', 'creditData.renewal' => 'daily'],
+      )->assertSet('mountedActions.0.name', 'saveCredit');
+      $page->assertSee('Confirm settings change')->assertSee('Reason');
+      $page->setActionData(['reason' => 'Start daily credits'])->callMountedAction()->assertHasNoActionErrors()->assertNotified('AI controls updated');
+      $this->assertSame(1200, $plugin->credits()->policy($context)['limit']);
+      $this->assertNotNull($plugin->credits()->policy($context)['renews_at']);
+      $this->assertSame('Start daily credits', $plugin->controls()->audit($context)->sole()->reason);
+      $page = \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\AiControlsPage::class)
+        ->assertSet('creditData.enabled', true)->assertSet('creditData.limit', 1200)->assertSet('creditData.renewal', 'daily');
+      $page->fillForm(['rate_enabled' => true, 'rate_limit' => null, 'rate_window_seconds' => null], 'rateForm')
+        ->call('confirmSettings', 'rate')->assertHasErrors(['rateData.rate_limit']);
+      $this->assertFalse($plugin->abuse()->policy($context)['rate_enabled']);
+      foreach ([['rate', ['rate_enabled' => true, 'rate_limit' => '2', 'rate_window_seconds' => '60']],
+        ['concurrency', ['concurrency_enabled' => true, 'concurrency_limit' => '1']],
+        ['failure', ['failure_enabled' => true, 'failure_limit' => '2', 'failure_window_seconds' => '60', 'failure_pause_seconds' => '30']]] as [$group, $values]) {
+        // A fresh component leaves schema/action caches cold, as on a reloaded page.
+        $page = \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\AiControlsPage::class);
+        $updates = [];
+        foreach ($values as $field => $value) { $updates[$group . 'Data.' . $field] = $value; }
+        $page->update(
+          [['method' => 'mountAction', 'params' => ['save' . ucfirst($group), [], ['schemaComponent' => 'settings.' . $group . 'Actions']]]],
+          $updates,
+        )->assertSet('mountedActions.0.name', 'save' . ucfirst($group));
+        $page->assertSee('Confirm settings change')->assertSee('Reason');
+        $page->setActionData(['reason' => 'Configure protection'])->callMountedAction()->assertHasNoActionErrors()->assertNotified('AI controls updated');
+        $policy = $plugin->abuse()->policy($context);
+        $freshPage = \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\AiControlsPage::class);
+        foreach ($values as $field => $value) {
+          $expected = is_bool($value) ? $value : (int) $value;
+          $this->assertSame($expected, $policy[$field]);
+          $freshPage->assertSet($group . 'Data.' . $field, $expected);
+        }
+        $this->assertSame('Configure protection', $plugin->controls()->audit($context)->latest('id')->first()->reason);
+      }
+      $page->fillForm(['rate_enabled' => false, 'rate_limit' => '2', 'rate_window_seconds' => '60'], 'rateForm')
+        ->call('confirmSettings', 'rate')->setActionData(['reason' => 'Disable frequency'])->callMountedAction()->assertHasNoActionErrors();
+      $this->assertFalse($plugin->abuse()->policy($context)['rate_enabled']);
+      $this->assertSame(2, $plugin->abuse()->policy($context)['rate_limit']);
+      $this->assertSame(5, $plugin->controls()->audit($context)->count());
+      foreach (['users', 'activity', 'settings'] as $section) {
+        $page->call('showSection', $section);
+        $this->assertSame(1, substr_count($page->html(), 'wire:partial="action-modals"'));
+      }
+      $page->callAction('renew', data: ['reason' => 'Renew everyone'])->assertHasNoActionErrors();
+      $this->assertSame('quota_renew', $plugin->controls()->audit($context)->latest('id')->first()->action);
+      $page->fillForm(['concurrency_enabled' => false, 'concurrency_limit' => '1'], 'concurrencyForm')
+        ->call('confirmSettings', 'concurrency')->setActionData(['reason' => 'Permission revoked']);
+      $plugin->authorizeManageUsing(fn () => false);
+      $page->callMountedAction()->assertForbidden();
+    } finally {
+      $stopForcingRender();
     }
-    $this->assertFalse($plugin->credits()->policy($context)['enabled']);
-    $this->assertSame(0, $plugin->controls()->audit($context)->count());
-    $page->fillForm(['enabled' => true, 'limit' => '1200', 'renewal' => 'daily'], 'creditForm')
-      ->mountAction(TestAction::make('saveCredit')->schemaComponent('creditActions', 'settings'))->setActionData(['reason' => 'Start daily credits'])->callMountedAction()->assertHasNoActionErrors();
-    $this->assertSame(1200, $plugin->credits()->policy($context)['limit']);
-    $this->assertNotNull($plugin->credits()->policy($context)['renews_at']);
-    $page->fillForm(['rate_enabled' => true, 'rate_limit' => null, 'rate_window_seconds' => null], 'rateForm')
-      ->call('confirmSettings', 'rate')->assertHasErrors(['rateData.rate_limit']);
-    $this->assertFalse($plugin->abuse()->policy($context)['rate_enabled']);
-    foreach ([['rate', ['rate_enabled' => true, 'rate_limit' => '2', 'rate_window_seconds' => '60']],
-      ['concurrency', ['concurrency_enabled' => true, 'concurrency_limit' => '1']],
-      ['failure', ['failure_enabled' => true, 'failure_limit' => '2', 'failure_window_seconds' => '60', 'failure_pause_seconds' => '30']]] as [$group, $values]) {
-      $page->fillForm($values, $group . 'Form')->call('confirmSettings', $group)
-        ->setActionData(['reason' => 'Configure protection'])->callMountedAction()->assertHasNoActionErrors();
-      $this->assertTrue($plugin->abuse()->policy($context)[$group . '_enabled']);
-    }
-    $page->fillForm(['rate_enabled' => false, 'rate_limit' => '2', 'rate_window_seconds' => '60'], 'rateForm')
-      ->call('confirmSettings', 'rate')->setActionData(['reason' => 'Disable frequency'])->callMountedAction()->assertHasNoActionErrors();
-    $this->assertFalse($plugin->abuse()->policy($context)['rate_enabled']);
-    $this->assertSame(2, $plugin->abuse()->policy($context)['rate_limit']);
-    $this->assertSame(5, $plugin->controls()->audit($context)->count());
-    $page->callAction('renew', data: ['reason' => 'Renew everyone'])->assertHasNoActionErrors();
-    $this->assertSame('quota_renew', $plugin->controls()->audit($context)->latest('id')->first()->action);
-    $page->fillForm(['concurrency_enabled' => false, 'concurrency_limit' => '1'], 'concurrencyForm')
-      ->call('confirmSettings', 'concurrency')->setActionData(['reason' => 'Permission revoked']);
-    $plugin->authorizeManageUsing(fn () => false);
-    $page->callMountedAction()->assertForbidden();
   }
 
   public function test_own_credit_page_uses_only_current_actor_without_management_and_rechecks_context(): void
