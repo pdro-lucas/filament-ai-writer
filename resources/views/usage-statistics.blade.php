@@ -6,26 +6,48 @@
         $measuredTokens = $summary['input_tokens']['known'] + $summary['output_tokens']['known'];
         $duration = $summary['duration_ms'];
         $period = $filters['period'] ?? [];
+        $filterForm = $this->getTableFiltersForm();
     @endphp
     @include('filament-ai-writer::usage-styles')
-    <div class="ai-usage" x-data="{ filtersOpen: @js($periodPreset === 'custom') }">
+    <div class="ai-usage">
         <div class="ai-usage-toolbar">
             <span class="ai-usage-muted">{{ $period['from'] ?? 'All history' }} — {{ $period['until'] ?? 'Today' }} · {{ $timezone }}</span>
             <div class="ai-usage-controls" aria-label="Usage filters">
                 <label for="ai-usage-period" class="ai-usage-muted">Period</label>
-                <select id="ai-usage-period" x-model="$wire.periodPreset" class="ai-usage-period" aria-controls="ai-usage-filters"
-                    x-on:change="if ($event.target.value === 'custom') { filtersOpen = true } else { $wire.setPeriod(Number($event.target.value)) }">
-                    @foreach (['1' => 'Today', '7' => '7 days', '30' => '30 days', 'custom' => 'Custom range'] as $value => $label)
-                        <option value="{{ $value }}" @selected((string) $value === $periodPreset)>{{ $label }}</option>
-                    @endforeach
-                </select>
-                <x-filament::button size="sm" color="gray" icon="heroicon-m-adjustments-horizontal"
-                    x-on:click="filtersOpen = ! filtersOpen" x-bind:aria-expanded="filtersOpen" aria-controls="ai-usage-filters">Filters</x-filament::button>
+                <x-filament::dropdown :menu="false" placement="bottom-end" shift width="xs"
+                    :wire:key="$this->getId() . '.usage.period'">
+                    <x-slot name="trigger">
+                        <div class="ai-usage-controls">
+                            <x-filament::input.wrapper class="ai-usage-period">
+                                <x-filament::input.select id="ai-usage-period" tabindex="0" x-model="$wire.periodPreset"
+                                    x-on:mousedown.stop="" x-on:keydown.stop="if ($event.key === 'Escape') close()"
+                                    x-on:change="if ($event.target.value === 'custom') { $nextTick(() => open($event)) } else { close(); $wire.setPeriod(Number($event.target.value)) }">
+                                    @foreach (['1' => 'Today', '7' => '7 days', '30' => '30 days', 'custom' => 'Custom range'] as $value => $label)
+                                        <option value="{{ $value }}" @selected((string) $value === $periodPreset)>{{ $label }}</option>
+                                    @endforeach
+                                </x-filament::input.select>
+                            </x-filament::input.wrapper>
+                            <x-filament::icon-button icon="heroicon-m-calendar-days" color="gray" size="sm"
+                                label="Edit custom dates" tooltip="Edit custom dates" x-cloak x-show="$wire.periodPreset === 'custom'" />
+                        </div>
+                    </x-slot>
+                    <div class="ai-usage-popover" role="group" aria-label="Custom date range">
+                        {{-- Render each group from the cached table schema once, keeping its original state path. --}}
+                        {{ $filterForm->getComponentByStatePath('period') }}
+                    </div>
+                </x-filament::dropdown>
+                <x-filament::dropdown :menu="false" placement="bottom-end" shift width="xs"
+                    :wire:key="$this->getId() . '.usage.filters'">
+                    <x-slot name="trigger">
+                        <x-filament::button size="sm" color="gray" icon="heroicon-m-adjustments-horizontal">Filters</x-filament::button>
+                    </x-slot>
+                    <div class="ai-usage-popover" role="group" aria-label="Usage filters">
+                        {{ $filterForm->getComponentByStatePath('actor') }}
+                        {{ $filterForm->getComponentByStatePath('status') }}
+                        <div><x-filament::button size="sm" color="gray" wire:click="resetUsageFilters" x-on:click="close()">Reset filters</x-filament::button></div>
+                    </div>
+                </x-filament::dropdown>
             </div>
-        </div>
-        <div id="ai-usage-filters" class="ai-usage-filter-form" x-show="filtersOpen" x-cloak role="region" aria-label="Usage filters">
-            {{ $this->getTableFiltersForm() }}
-            <div><x-filament::button size="sm" color="gray" wire:click="resetUsageFilters">Reset filters</x-filament::button></div>
         </div>
 
         <dl class="ai-usage-metrics" aria-label="Usage overview">
