@@ -1,6 +1,6 @@
 {
   "name": "pdro-lucas/filament-ai-writer",
-  "description": "AI Writer Action for Filament Forms — supports OpenAI, Claude, Gemini and OpenRouter",
+  "description": "Filament AI writing plugin with per-panel permissions and shared provider generation",
   "type": "library",
   "license": "MIT",
   "keywords": [
@@ -19,13 +19,14 @@
     }
   ],
   "require": {
-    "php": "^8.1",
+    "php": "^8.2",
     "filament/filament": "^4.0 || ^5.0",
-    "illuminate/support": "*",
-    "illuminate/http": "*"
+    "illuminate/support": "^11.28 || ^12.0",
+    "illuminate/http": "^11.28 || ^12.0"
   },
   "require-dev": {
-    "laravel/framework": "^10.0 || ^11.0 || ^12.0"
+    "orchestra/testbench": "^10.0",
+    "phpunit/phpunit": "^11.5.3"
   },
   "autoload": {
     "psr-4": {
@@ -40,5 +41,21 @@
     }
   },
   "minimum-stability": "dev",
-  "prefer-stable": true
+  "prefer-stable": true,
+  "autoload-dev": {
+    "psr-4": {
+      "PdroLucas\\FilamentAiWriter\\Tests\\": "tests/",
+      "Workbench\\App\\": "workbench/app/",
+      "Workbench\\Database\\Seeders\\": "workbench/database/seeders/"
+    }
+  },
+  "scripts": {
+    "post-autoload-dump": "@php vendor/bin/testbench package:discover --ansi",
+    "workbench:build": "@php vendor/bin/testbench workbench:build --ansi",
+    "serve": [
+      "Composer\\Config::disableProcessTimeout",
+      "@php vendor/bin/testbench serve --host=127.0.0.1 --port=8000"
+    ],
+    "test": "@php vendor/bin/phpunit"
+  }
 }

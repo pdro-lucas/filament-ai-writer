@@ -3,6 +3,7 @@
 namespace PdroLucas\FilamentAiWriter;
 
 use Illuminate\Support\ServiceProvider;
+use PdroLucas\FilamentAiWriter\Exceptions\GenerationFailure;
 use PdroLucas\FilamentAiWriter\Contracts\AiProvider;
 use PdroLucas\FilamentAiWriter\Providers\AnthropicProvider;
 use PdroLucas\FilamentAiWriter\Providers\GeminiProvider;
@@ -20,13 +21,32 @@ class FilamentAiWriterServiceProvider extends ServiceProvider
         "openai" => new OpenAiProvider(),
         "gemini" => new GeminiProvider(),
         "openrouter" => new OpenRouterProvider(),
-        default => new AnthropicProvider(),
+        "anthropic" => new AnthropicProvider(),
+        default => throw new GenerationFailure("configuration"),
       };
     });
   }
 
   public function boot(): void
   {
+    \Livewire\Livewire::component('filament-ai-writer-credits', \PdroLucas\FilamentAiWriter\Livewire\OwnCreditsIndicator::class);
+    if ($this->app->runningInConsole()) {
+      $this->commands([\PdroLucas\FilamentAiWriter\Console\PruneUsageCommand::class, \PdroLucas\FilamentAiWriter\Console\RecoverOperationsCommand::class]);
+    }
+
+    $this->loadViewsFrom(__DIR__ . "/../resources/views", "filament-ai-writer");
+
+    $this->publishes([
+      __DIR__ . '/../resources/views' => resource_path('views/vendor/filament-ai-writer'),
+    ], 'filament-ai-writer-views');
+
+    $this->publishesMigrations([
+      __DIR__ . "/../database/migrations/2026_10_21_000001_create_ai_writer_usage_table.php" => database_path("migrations/2026_10_21_000001_create_ai_writer_usage_table.php"),
+      __DIR__ . "/../database/migrations/2026_10_21_000002_create_ai_writer_controls_tables.php" => database_path("migrations/2026_10_21_000002_create_ai_writer_controls_tables.php"),
+      __DIR__ . "/../database/migrations/2026_10_21_000003_create_ai_writer_credits_tables.php" => database_path("migrations/2026_10_21_000003_create_ai_writer_credits_tables.php"),
+      __DIR__ . "/../database/migrations/2026_10_21_000004_add_ai_writer_abuse_policy.php" => database_path("migrations/2026_10_21_000004_add_ai_writer_abuse_policy.php"),
+    ], "filament-ai-writer-migrations");
+
     $this->publishes(
       [
         __DIR__ . "/../config/filament-ai-writer.php" => config_path("filament-ai-writer.php"),
