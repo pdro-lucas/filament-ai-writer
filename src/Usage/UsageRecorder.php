@@ -5,7 +5,6 @@ namespace PdroLucas\FilamentAiWriter\Usage;
 use Carbon\CarbonImmutable;
 use Closure;
 use Illuminate\Database\Query\Builder;
-use Illuminate\Database\UniqueConstraintViolationException;
 use PdroLucas\FilamentAiWriter\Data\GenerateResult;
 use PdroLucas\FilamentAiWriter\Data\GenerationContext;
 use PdroLucas\FilamentAiWriter\Exceptions\GenerationFailure;
@@ -15,26 +14,25 @@ use Throwable;
 
 class UsageRecorder
 {
-  public function begin(GenerationContext $context): void
+  /** Direct ledger callers get durable deduplication, but do not admit generation or reserve quota. */
+  public function begin(GenerationContext $context, ?\PdroLucas\FilamentAiWriter\Controls\ControlContext $admission = null): void
   {
-    try {
-      $query = $this->query();
-      if ($query->getConnection()->transactionLevel() !== 0) {
-        throw new GenerationFailure('transaction');
-      }
-      $query->insert([
+    $this->credits()->start($context, $admission, function () use ($context): void {
+      $this->query()->insert([
         'operation_id' => $context->operationId, 'attempt_number' => 1,
         'panel_id' => $context->panelId, 'actor_type' => $context->actorType, 'actor_id' => $context->actorId,
         'field' => $context->field, 'action_name' => $context->actionName,
         'started_at' => $context->startedAt, 'status' => 'pending',
         'provider' => $context->configuredProvider, 'requested_model' => $context->requestedModel,
       ]);
-    } catch (GenerationFailure $failure) {
-      throw $failure;
-    } catch (UniqueConstraintViolationException) {
+    });
+  }
+
+  /** Managed generations check the durable deadline again before contacting a provider. */
+  public function assertLive(GenerationContext $context): void
+  {
+    if (!$this->credits()->transition($context, 'check', fn () => true)) {
       throw new GenerationFailure('duplicate');
-    } catch (Throwable) {
-      throw new GenerationFailure('storage');
     }
   }
 
@@ -42,20 +40,26 @@ class UsageRecorder
   public function received(GenerationContext $context, array $quote): bool
   {
     try {
-      return $this->scoped($context)->where('status', 'pending')->update([
+      return $this->credits()->transition($context, 'received', fn (): bool => $this->scoped($context)->where('status', 'pending')->update([
         ...$this->metadata($quote), 'status' => 'received', 'received_at' => CarbonImmutable::now('UTC'),
-      ]) === 1;
-    } catch (Throwable) {
-      throw new GenerationFailure('storage');
+      ]) === 1);
+    } catch (Throwable $error) {
+      if ($error instanceof GenerationFailure && $error->failureCode === 'expired') {
+        $this->lateMetadata($context, [...$this->metadata($quote), 'outcome_unknown' => false]);
+      }
+      throw $error instanceof GenerationFailure ? $error : new GenerationFailure('storage');
     }
   }
 
   /** HTTP has already finished; this transaction contains only the local delivery and final write. */
   public function delivered(GenerationContext $context, GenerateResult $result, Closure $deliver, Closure $restore): bool
   {
+    if ($this->credits()->connection()->transactionLevel() !== 0) {
+      throw new GenerationFailure('transaction');
+    }
     $applied = false;
     try {
-      return $this->query()->getConnection()->transaction(function () use ($context, $result, $deliver, &$applied): bool {
+      return $this->credits()->transition($context, 'delivered', function () use ($context, $result, $deliver, &$applied): bool {
         if (!$this->scoped($context)->where('status', 'received')->lockForUpdate()->first()) {
           return false;
         }
@@ -91,7 +95,7 @@ class UsageRecorder
   public function failed(GenerationContext $context, GenerationFailure $failure, ?array $quote = null): bool
   {
     try {
-      return $this->query()->getConnection()->transaction(function () use ($context, $failure, $quote): bool {
+      $accepted = $this->credits()->transition($context, 'failed', function () use ($context, $failure, $quote): bool {
         $row = $this->scoped($context)->whereIn('status', ['pending', 'received'])->lockForUpdate()->first();
         if ($row === null) {
           return false;
@@ -108,6 +112,48 @@ class UsageRecorder
           'response_id' => $row->response_id ?? $metadata['response_id'] ?? ProviderResponse::label($failure->responseId),
         ]) === 1;
       });
+      $lateQuote = $quote ?? ($failure->result === null ? null : app(CostCalculator::class)->quote($failure->result));
+      $this->lateMetadata($context, [
+        ...($lateQuote === null ? [] : $this->metadata($lateQuote)),
+        'http_status' => $failure->httpStatus, 'request_id' => ProviderResponse::label($failure->requestId ?? $failure->result?->requestId),
+        'response_id' => ProviderResponse::label($failure->responseId ?? $failure->result?->responseId),
+        'duration_ms' => $failure->result?->durationMs ?? $failure->durationMs,
+        'local_duration_ms' => $context->localDuration($failure->result?->durationMs ?? $failure->durationMs),
+        'outcome_unknown' => $failure->outcomeUnknown,
+      ]);
+      return $accepted;
+    } catch (Throwable $error) {
+      throw $error instanceof GenerationFailure ? $error : new GenerationFailure('storage');
+    }
+  }
+
+  /** First known late response may enrich existing expired history, never recreate it. */
+  private function lateMetadata(GenerationContext $context, array $metadata): void
+  {
+    try {
+      $connection = $this->credits()->connection();
+      $operation = $connection->table('filament_ai_writer_operations')->where('operation_id', $context->operationId)->first();
+      if ($operation === null || $operation->status !== 'recovered' || $operation->panel_id !== $context->panelId
+        || $operation->actor_type !== $context->actorType || $operation->actor_id !== $context->actorId
+        || $operation->field !== $context->field || $operation->action_name !== $context->actionName) {
+        return;
+      }
+      $this->scoped($context)->where('status', 'failed')->where('failure_code', 'expired')->whereNull('received_at')->update([
+        ...$metadata, 'received_at' => CarbonImmutable::now('UTC'),
+      ]);
+    } catch (Throwable) {
+      throw new GenerationFailure('storage');
+    }
+  }
+
+  private function credits(): \PdroLucas\FilamentAiWriter\Credits\Credits
+  {
+    try {
+      $credits = app(\PdroLucas\FilamentAiWriter\Credits\Credits::class);
+      if ($this->query()->getConnection() !== $credits->connection()) {
+        throw new GenerationFailure('storage');
+      }
+      return $credits;
     } catch (Throwable) {
       throw new GenerationFailure('storage');
     }

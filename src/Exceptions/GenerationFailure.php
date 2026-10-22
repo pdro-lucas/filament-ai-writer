@@ -9,6 +9,8 @@ final class GenerationFailure extends RuntimeException
 {
   public const MESSAGES = [
     'disabled' => 'AI is disabled for this scope. Contact your administrator.',
+    'expired' => 'This AI operation expired. Its result cannot be delivered; any reserved credit was released.',
+    'credits' => 'Your AI credits are exhausted. Contact your administrator.',
     'blocked' => 'Your AI access is blocked. Contact your administrator.',
     'controls' => 'AI access controls are unavailable. Contact your administrator; publish and run the plugin migrations before generating.',
     'configuration' => 'AI Writer configuration is invalid. Check the provider, model, key and timeout settings.',

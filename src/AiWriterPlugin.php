@@ -23,6 +23,11 @@ class AiWriterPlugin implements Plugin
   protected ?Closure $actorSearch = null;
   protected ?Closure $actorResolver = null;
 
+  public function credits(): \PdroLucas\FilamentAiWriter\Credits\Credits
+  {
+    return app(\PdroLucas\FilamentAiWriter\Credits\Credits::class);
+  }
+
   public function controls(): \PdroLucas\FilamentAiWriter\Controls\Controls
   {
     return app(\PdroLucas\FilamentAiWriter\Controls\Controls::class);

@@ -264,6 +264,176 @@ class AiControlsTest extends TestCase
     }
   }
 
+  public function test_credit_policy_preserves_consumption_and_enforces_last_credit(): void
+  {
+    $this->login();
+    $plugin = AiWriterPlugin::get();
+    $context = $plugin->controlContext();
+    $credits = $plugin->credits();
+    $credits->configure($context, true, 1, 'manual', 'Start quota');
+    Http::fake(['*' => Http::response(['model' => 'demo', 'choices' => [['message' => ['content' => 'Generated'], 'finish_reason' => 'stop']]])]);
+    $plugin->generation()->run('prompt', 'input', fn () => null, fn () => null, 'content');
+    $this->assertSame(0, $credits->ownBalance($context)['available']);
+    try {
+      $plugin->generation()->run('prompt', 'input', fn () => $this->fail('Exhausted'), fn () => null, 'content');
+      $this->fail('Must deny exhausted quota');
+    } catch (GenerationFailure $failure) {
+      $this->assertSame('credits', $failure->failureCode);
+    }
+    Http::assertSentCount(1);
+    $credits->configure($context, false, 3, 'manual', 'Pause quota');
+    $plugin->generation()->run('prompt', 'input', fn () => null, fn () => null, 'content');
+    $credits->configure($context, true, 3, 'manual', 'Resume quota');
+    $this->assertSame(1, $credits->ownBalance($context)['consumed']);
+    $this->assertSame(2, $credits->ownBalance($context)['available']);
+    $credits->setLimit($context, $context->actor, 0, 'Lower limit');
+    $this->assertSame(1, $credits->ownBalance($context)['consumed']);
+    $this->assertSame(0, $credits->ownBalance($context)['available']);
+  }
+
+  public function test_quota_off_admission_stays_free_when_enabled_during_http_and_reset_preserves_inflight_origin(): void
+  {
+    $this->login();
+    $plugin = AiWriterPlugin::get();
+    $context = $plugin->controlContext();
+    $credits = $plugin->credits();
+    $credits->configure($context, false, 1, 'manual', 'Configure');
+    Http::fake(function () use ($credits, $context) {
+      $this->assertSame(0, \Illuminate\Support\Facades\DB::transactionLevel());
+      $credits->configure($context, true, 1, 'manual', 'Activate while running');
+      return Http::response(['choices' => [['message' => ['content' => 'Text'], 'finish_reason' => 'stop']]]);
+    });
+    $plugin->generation()->run('prompt', 'input', fn () => null, fn () => null, 'content');
+    $this->assertSame(1, $credits->ownBalance($context)['available']);
+    Http::fake(function () use ($credits, $context) {
+      $this->assertSame(1, $credits->ownBalance($context)['reserved']);
+      $credits->reset($context, $context->actor, 'Reset during flight');
+      $this->assertSame(1, $credits->ownBalance($context)['available']);
+      return Http::response(['choices' => [['message' => ['content' => 'Text'], 'finish_reason' => 'stop']]]);
+    });
+    $plugin->generation()->run('prompt', 'input', fn () => null, fn () => null, 'content');
+    $this->assertSame(0, $credits->ownBalance($context)['consumed']);
+    $this->assertSame(0, $credits->ownBalance($context)['reserved']);
+    $this->assertSame(1, $credits->ownBalance($context)['available']);
+  }
+
+  public function test_credit_mutations_rollback_with_audit_and_own_balance_does_not_require_admin(): void
+  {
+    $this->login();
+    $plugin = AiWriterPlugin::get();
+    $context = $plugin->controlContext();
+    $credits = $plugin->credits();
+    $credits->configure($context, true, 2, 'manual', 'Start');
+    $credits->grant($context, $context->actor, 3, 'Temporary extra');
+    $this->assertSame(5, $credits->ownBalance($context)['available']);
+    \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\AiControlsPage::class)
+      ->assertSee('Credit policy updated')->assertSee('Extra credits granted')->assertSee('Available: 5');
+    \Illuminate\Support\Facades\DB::unprepared("CREATE TEMP TRIGGER fail_credit_audit BEFORE INSERT ON filament_ai_writer_control_audit BEGIN SELECT RAISE(ABORT, 'audit failure'); END");
+    try {
+      $credits->reset($context, $context->actor, 'Reset');
+      $this->fail('Audit must be atomic');
+    } catch (\Illuminate\Database\QueryException) {
+      $this->assertSame(5, $credits->ownBalance($context)['available']);
+    }
+    $plugin->authorizeManageUsing(fn () => false)->authorizeViewStatisticsUsing(fn () => false);
+    $this->assertSame(5, $credits->ownBalance($context)['available']);
+    try {
+      $credits->balance($context, $context->actor);
+      $this->fail('Must require admin for target balance');
+    } catch (\Symfony\Component\HttpKernel\Exception\HttpException $error) {
+      $this->assertSame(403, $error->getStatusCode());
+    }
+    $plugin->resolveScopeUsing(fn () => 'changed-tenant');
+    $this->expectException(\Symfony\Component\HttpKernel\Exception\HttpException::class);
+    $credits->ownBalance($context);
+  }
+
+  public function test_credit_calendar_changes_preserve_current_period_and_manual_switch_uses_next_cut(): void
+  {
+    $this->login();
+    $credits = AiWriterPlugin::get()->credits();
+    $context = AiWriterPlugin::get()->controlContext();
+    $previous = \Carbon\CarbonImmutable::getTestNow();
+    config(['app.timezone' => 'America/New_York']);
+    try {
+      \Carbon\CarbonImmutable::setTestNow('2026-03-07 17:00:00 UTC');
+      $credits->configure($context, true, 2, 'manual', 'Start');
+      $credits->grant($context, $context->actor, 1, 'Extra');
+      $initial = $credits->ownBalance($context);
+      $credits->configure($context, true, 2, 'daily', 'Next day');
+      $scheduled = $credits->ownBalance($context);
+      $this->assertSame($initial['period_id'], $scheduled['period_id']);
+      $this->assertSame(3, $scheduled['available']);
+      $this->assertSame('2026-03-08 05:00:00', $scheduled['renews_at']);
+      \Carbon\CarbonImmutable::setTestNow('2026-03-08 05:00:00 UTC');
+      $next = $credits->ownBalance($context);
+      $this->assertNotSame($initial['period_id'], $next['period_id']);
+      $this->assertSame(2, $next['available']);
+      $this->assertSame('2026-03-09 04:00:00', $next['renews_at']); // 23-hour DST day
+      $credits->configure($context, true, 2, 'weekly', 'Next calendar');
+      $this->assertSame($next['period_id'], $credits->ownBalance($context)['period_id']);
+      $this->assertSame('2026-03-09 04:00:00', $credits->ownBalance($context)['renews_at']);
+      \Carbon\CarbonImmutable::setTestNow('2026-03-09 04:00:00 UTC');
+      $weekly = $credits->ownBalance($context);
+      $this->assertSame('2026-03-16 04:00:00', $weekly['renews_at']);
+      $credits->configure($context, true, 2, 'monthly', 'Next month');
+      \Carbon\CarbonImmutable::setTestNow('2026-03-16 04:00:00 UTC');
+      $this->assertSame('2026-04-01 04:00:00', $credits->ownBalance($context)['renews_at']);
+    } finally {
+      \Carbon\CarbonImmutable::setTestNow($previous);
+    }
+  }
+
+  public function test_credit_input_contract_rejects_lossy_values_and_preserves_large_balance(): void
+  {
+    $this->login();
+    $credits = AiWriterPlugin::get()->credits();
+    $context = AiWriterPlugin::get()->controlContext();
+    foreach ([-1, 1.5, '2', true, PHP_INT_MAX] as $invalid) {
+      try {
+        $credits->configure($context, true, $invalid, 'manual', 'Invalid');
+        $this->fail('Must reject invalid integer');
+      } catch (\Illuminate\Validation\ValidationException) {
+        $this->assertFalse($credits->policy($context)['enabled']);
+      }
+    }
+    $credits->configure($context, true, 2147483647, 'manual', 'Large quota');
+    $credits->grant($context, $context->actor, 2147483647, 'Large extra');
+    $this->assertSame(4294967294, $credits->ownBalance($context)['available']);
+    try {
+      $credits->grant($context, $context->actor, 1, 'Overflow extra');
+      $this->fail('Must reject overflow');
+    } catch (\Illuminate\Validation\ValidationException) {
+      $this->assertSame(4294967294, $credits->ownBalance($context)['available']);
+    }
+    $credits->setLimit($context, $context->actor, 0, 'Zero override');
+    $this->assertSame(2147483647, $credits->ownBalance($context)['available']);
+  }
+
+  public function test_renewal_during_http_keeps_new_period_unconsumed_and_old_admission_valid(): void
+  {
+    $this->login();
+    $plugin = AiWriterPlugin::get();
+    $credits = $plugin->credits();
+    $context = $plugin->controlContext();
+    $credits->configure($context, true, 1, 'manual', 'Start');
+    $origin = $credits->ownBalance($context)['period_id'];
+    Http::fake(function () use ($credits, $context) {
+      $this->assertSame(1, $credits->ownBalance($context)['reserved']);
+      $credits->renew($context, 'Renew while running');
+      $this->assertSame(1, $credits->ownBalance($context)['available']);
+      return Http::response(['choices' => [['message' => ['content' => 'Text'], 'finish_reason' => 'stop']]]);
+    });
+    $delivered = false;
+    $plugin->generation()->run('prompt', 'input', function () use (&$delivered) { $delivered = true; }, fn () => null, 'content');
+    $this->assertTrue($delivered);
+    $balance = $credits->ownBalance($context);
+    $this->assertNotSame($origin, $balance['period_id']);
+    $this->assertSame(0, $balance['consumed']);
+    $this->assertSame(0, $balance['reserved']);
+    $this->assertSame(1, $balance['available']);
+  }
+
   private function login(): void
   {
     $this->seed(DatabaseSeeder::class);

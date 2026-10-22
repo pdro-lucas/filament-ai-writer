@@ -53,6 +53,8 @@ class UsageLedgerTest extends TestCase
     $this->login();
     if ($condition === 'table') {
       config(['filament-ai-writer.tables.usage' => 'missing_usage']);
+    } elseif ($condition === 'ledger_connection') {
+      config(['database.connections.separate' => config('database.connections.testing'), 'filament-ai-writer.connection' => 'separate']);
     } elseif ($condition === 'connection') {
       config(['database.default' => 'PRIVATE-missing-connection']);
     } else {
@@ -67,7 +69,7 @@ class UsageLedgerTest extends TestCase
       $this->assertStringNotContainsString('PRIVATE', $failure->getMessage());
       Http::assertNothingSent();
     } finally {
-      config(['database.default' => 'testing']);
+      config(['database.default' => 'testing', 'filament-ai-writer.connection' => null]);
       if ($condition === 'transaction') {
         DB::rollBack();
       }
@@ -76,7 +78,7 @@ class UsageLedgerTest extends TestCase
 
   public static function admissionFailures(): array
   {
-    return ['missing table' => ['table', 'storage'], 'missing connection' => ['connection', 'storage'], 'outer transaction' => ['transaction', 'transaction']];
+    return ['separate ledger connection' => ['ledger_connection', 'storage'], 'missing table' => ['table', 'storage'], 'missing connection' => ['connection', 'storage'], 'outer transaction' => ['transaction', 'transaction']];
   }
 
   private function login(): void
@@ -140,6 +142,154 @@ class UsageLedgerTest extends TestCase
     ];
   }
 
+  public function test_pruned_operation_cannot_call_provider_or_deliver_again(): void
+  {
+    $this->login();
+    $operation = (string) \Illuminate\Support\Str::uuid();
+    Http::fake(['*' => Http::response($this->response())]);
+    $generation = AiWriterPlugin::get()->generation();
+    $generation->run('prompt', 'input', fn () => null, fn () => null, 'content', $operation);
+    DB::table('filament_ai_writer_usage')->update(['started_at' => '2020-01-01', 'completed_at' => '2020-01-02']);
+    config(['filament-ai-writer.retention' => ['days' => 1, 'batch_size' => 500]]);
+    $this->artisan('ai-writer:prune-usage')->expectsOutputToContain('Deleted 1')->assertSuccessful();
+    try {
+      $generation->run('prompt', 'input', fn () => $this->fail('Duplicate delivery'), fn () => null, 'content', $operation);
+      $this->fail('Must preserve durable duplicate guard');
+    } catch (GenerationFailure $failure) {
+      $this->assertSame('duplicate', $failure->failureCode);
+    }
+    Http::assertSentCount(1);
+  }
+
+  public function test_public_delivery_refuses_outer_transaction_before_mutating_field(): void
+  {
+    $context = new \PdroLucas\FilamentAiWriter\Data\GenerationContext((string) \Illuminate\Support\Str::uuid(), 'panel', 'Actor', 'opaque', 'content');
+    $recorder = app(\PdroLucas\FilamentAiWriter\Usage\UsageRecorder::class);
+    $result = new GenerateResult('custom', 'requested', 'returned', 'Text');
+    $recorder->begin($context);
+    $recorder->received($context, app(\PdroLucas\FilamentAiWriter\Usage\CostCalculator::class)->quote($result));
+    DB::beginTransaction();
+    try {
+      $recorder->delivered($context, $result, fn () => $this->fail('Must not mutate'), fn () => $this->fail('No restore needed'));
+      $this->fail('Must reject outer transaction');
+    } catch (GenerationFailure $failure) {
+      $this->assertSame('transaction', $failure->failureCode);
+    } finally {
+      DB::rollBack();
+    }
+    $this->assertTrue($recorder->delivered($context, $result, fn () => null, fn () => null));
+  }
+
+  #[DataProvider('expiryCases')]
+  public function test_deadline_fences_late_http_and_releases_once_with_or_without_maintenance(bool $quota, bool $maintenance, bool $prune = false, int $httpStatus = 200, bool $invalidBody = false): void
+  {
+    $this->login();
+    $plugin = AiWriterPlugin::get();
+    $plugin->authorizeManageUsing(fn () => true);
+    $context = $plugin->controlContext();
+    $plugin->credits()->configure($context, $quota, 1, 'manual', 'Start');
+    config(['filament-ai-writer.timeout' => 60, 'filament-ai-writer.recovery.margin_seconds' => 10]);
+    $operation = (string) \Illuminate\Support\Str::uuid();
+    $previous = CarbonImmutable::getTestNow();
+    CarbonImmutable::setTestNow('2026-10-21 12:00:00 UTC');
+    Http::fake(function () use ($plugin, $context, $quota, $maintenance, $prune, $httpStatus, $invalidBody) {
+      CarbonImmutable::setTestNow('2026-10-21 12:01:10 UTC');
+      // Editing configuration does not extend the already frozen deadline.
+      config(['filament-ai-writer.timeout' => 1000, 'filament-ai-writer.recovery.margin_seconds' => 1000]);
+      if ($maintenance) {
+        $this->artisan('ai-writer:recover-operations')->expectsOutputToContain('Recovered 1')->assertSuccessful();
+        $this->artisan('ai-writer:recover-operations')->expectsOutputToContain('Recovered 0')->assertSuccessful();
+        $balance = $plugin->credits()->ownBalance($context);
+        $this->assertSame(1, $balance['available']);
+        $this->assertSame(0, $balance['reserved']);
+        if ($prune) {
+          DB::table('filament_ai_writer_usage')->update(['started_at' => '2020-01-01', 'completed_at' => '2020-01-02']);
+          $this->artisan('ai-writer:prune-usage', ['--days' => 1])->expectsOutputToContain('Deleted 1')->assertSuccessful();
+        }
+      }
+      return Http::response($invalidBody ? 'invalid json' : $this->response(), $httpStatus, ['x-request-id' => 'late-request']);
+    });
+    try {
+      $plugin->generation()->run('prompt', 'input', fn () => $this->fail('Late worker must not deliver'), fn () => null, 'content', $operation);
+      $this->fail('Deadline must refuse delivery');
+    } catch (GenerationFailure $failure) {
+      $this->assertSame($httpStatus === 200 ? 'expired' : ($httpStatus === 400 ? 'request' : 'provider'), $failure->failureCode);
+      $balance = $plugin->credits()->ownBalance($context);
+      $this->assertSame(1, $balance['available']);
+      $this->assertSame(0, $balance['reserved']);
+      $this->assertSame(0, $balance['consumed']);
+      $this->artisan('ai-writer:recover-operations')->expectsOutputToContain('Recovered 0')->assertSuccessful();
+    } finally {
+      CarbonImmutable::setTestNow($previous);
+    }
+    Http::assertSentCount(1);
+    if (!$prune) {
+      $row = UsageAttempt::query()->sole();
+      $this->assertSame('failed', $row->status);
+      $this->assertSame('expired', $row->failure_code);
+      $this->assertSame($invalidBody ? null : 100, $row->input_tokens);
+      $this->assertSame($httpStatus >= 500, $row->outcome_unknown);
+      $this->assertSame('late-request', $row->request_id);
+      $this->assertIsInt($row->duration_ms);
+      if ($httpStatus !== 200) {
+        $this->assertSame($httpStatus, $row->http_status);
+      }
+    }
+    // A different late quote cannot replace the first known response or recreate pruning.
+    $late = new \PdroLucas\FilamentAiWriter\Data\GenerationContext($operation, $context->panelId, $context->actor->type, $context->actor->id, 'content');
+    $changed = new GenerateResult('custom', 'model', 'model', 'Text', inputTokens: 999);
+    try {
+      app(\PdroLucas\FilamentAiWriter\Usage\UsageRecorder::class)->received($late, app(\PdroLucas\FilamentAiWriter\Usage\CostCalculator::class)->quote($changed));
+      $this->fail('Must remain expired');
+    } catch (GenerationFailure $failure) {
+      $this->assertSame('expired', $failure->failureCode);
+    }
+    if ($prune) {
+      $this->assertSame(0, UsageAttempt::query()->count());
+    } else {
+      $this->assertSame($invalidBody ? null : 100, UsageAttempt::query()->sole()->input_tokens);
+    }
+  }
+
+  public static function expiryCases(): array
+  {
+    return ['quota maintenance' => [true, true], 'quota inline' => [true, false], 'free maintenance' => [false, true], 'free inline' => [false, false], 'pruned late response' => [true, true, true], 'late 400 no result' => [true, false, false, 400, true], 'late 503 no result' => [true, true, false, 503, true], 'late 503 measured unknown result' => [true, true, false, 503, false]];
+  }
+
+  public function test_deadline_crossed_by_local_delivery_restores_field_and_refunds(): void
+  {
+    $this->login();
+    $plugin = AiWriterPlugin::get();
+    $plugin->authorizeManageUsing(fn () => true);
+    $context = $plugin->controlContext();
+    $plugin->credits()->configure($context, true, 1, 'manual', 'Start');
+    config(['filament-ai-writer.timeout' => 1, 'filament-ai-writer.recovery.margin_seconds' => 0, 'filament-ai-writer.pricing.openai.returned-model' => ['input_usd_per_million' => '2', 'output_usd_per_million' => '10']]);
+    $previous = CarbonImmutable::getTestNow();
+    CarbonImmutable::setTestNow('2026-10-21 12:00:00 UTC');
+    $field = 'Original';
+    Http::fake(['*' => Http::response($this->response())]);
+    try {
+      $plugin->generation()->run('prompt', 'input', function () use (&$field) {
+        $field = 'Generated';
+        CarbonImmutable::setTestNow('2026-10-21 12:00:01 UTC');
+      }, function () use (&$field) { $field = 'Original'; }, 'content');
+      $this->fail('Must expire slow delivery');
+    } catch (GenerationFailure $failure) {
+      $this->assertSame('expired', $failure->failureCode);
+      $this->assertSame('Original', $field);
+      $this->assertSame(1, $plugin->credits()->ownBalance($context)['available']);
+      $this->assertSame(0, $plugin->credits()->ownBalance($context)['reserved']);
+      $row = UsageAttempt::query()->sole();
+      $this->assertSame('failed', $row->status);
+      $this->assertFalse($row->outcome_unknown);
+      $this->assertSame(100, $row->input_tokens);
+      $this->assertSame(40, $row->output_tokens);
+      $this->assertSame('0.000600000000', $row->cost_usd);
+    } finally {
+      CarbonImmutable::setTestNow($previous);
+    }
+  }
+
   public function test_recorder_finalization_is_idempotent_and_preserves_opaque_identity(): void
   {
     $context = new \PdroLucas\FilamentAiWriter\Data\GenerationContext((string) \Illuminate\Support\Str::uuid(), 'panel-one', 'HostActor', 'opaque:actor-001', 'tags');
@@ -165,6 +315,10 @@ class UsageLedgerTest extends TestCase
   public function test_delivery_or_final_write_failure_restores_scalar_and_array_fields(string $stage, mixed $original): void
   {
     $this->login();
+    $plugin = AiWriterPlugin::get();
+    $control = $plugin->controlContext();
+    $plugin->authorizeManageUsing(fn () => true);
+    $plugin->credits()->configure($control, true, 1, 'manual', 'Quota for failure');
     Http::fake(['*' => Http::response($this->response(), 200, ['x-request-id' => 'request-id'])]);
     if ($stage !== 'callback') {
       $status = $stage === 'received' ? 'received' : 'delivered';
@@ -185,7 +339,14 @@ class UsageLedgerTest extends TestCase
       $this->assertStringNotContainsString('PRIVATE', $failure->getMessage());
     }
     $this->assertSame($original, $field);
+    $balance = $plugin->credits()->ownBalance($control);
+    $this->assertSame(1, $balance['available']);
+    $this->assertSame(0, $balance['reserved']);
+    $this->assertSame(0, $balance['consumed']);
     $row = UsageAttempt::query()->sole();
+    $retryContext = new \PdroLucas\FilamentAiWriter\Data\GenerationContext($row->operation_id, $row->panel_id, $row->actor_type, $row->actor_id, $row->field);
+    $this->assertFalse(app(\PdroLucas\FilamentAiWriter\Usage\UsageRecorder::class)->failed($retryContext, new GenerationFailure('provider')));
+    $this->assertSame(1, $plugin->credits()->ownBalance($control)['available']);
     $this->assertSame('failed', $row->status);
     $this->assertNull($row->delivered_at);
     $this->assertSame(100, $row->input_tokens);

@@ -98,11 +98,11 @@ $panel->plugin(AiWriterPlugin::make());
 
 The Laravel ServiceProvider is still auto-discovered, but discovery does not register a panel plugin. Actions used without registration display configuration guidance and do not contact the provider. Remove temporary `authorize()` or `beforeGenerate()` callbacks whose only purpose was to duplicate plugin checks; keep application-specific restrictions and generation hooks. Actions outside a current Filament panel are no longer supported.
 
-The plugin now records metadata-only usage history. An authorized current-panel statistics page is registered by the plugin. Opt-in retention is available through a maintenance command; administrative availability and user blocking are available as described below. Quotas and abuse controls are not implemented.
+The plugin now records metadata-only usage history. An authorized current-panel statistics page is registered by the plugin. Opt-in retention is available through a maintenance command; administrative availability and user blocking are available as described below. Credit quotas are available through the server interface below; abuse controls and the complete credit UI remain pending.
 
 ## Administrative controls
 
-The plugin registers **AI Writer controls** at `ai-writer-controls` within each panel. Access and every subsequent read/write require `authorizeManageUsing()`; statistics permission, authentication, and permission to generate do not grant administration. Administrators can enable/disable AI, block/unblock individual users, and read the scoped audit history. A reason of up to 500 characters is required for each change. There are no quotas, credit fields, renewals or abuse limits in this release.
+The plugin registers **AI Writer controls** at `ai-writer-controls` within each panel. Access and every subsequent read/write require `authorizeManageUsing()`; statistics permission, authentication, and permission to generate do not grant administration. Administrators can enable/disable AI, block/unblock individual users, and read the scoped audit history. A reason of up to 500 characters is required for each change. Credit policy, renewals and adjustments use the server interface below; the complete credit UI and abuse limits remain pending.
 
 AI is enabled when there is no persisted policy. Generation still requires the existing use permission and action authorization. `Generation::run()` checks the effective availability and actor block on the server before the provider is called, including direct callers and submissions from an already open action modal. Blocking an administrator's AI use does not revoke their management permission.
 
@@ -116,6 +116,37 @@ php artisan migrate
 ```
 
 This adds `filament_ai_writer_policies`, `filament_ai_writer_actor_blocks`, and `filament_ai_writer_control_audit`. These tables belong to the plugin and do not change the host's users. The service provider never runs migrations automatically. Missing/inaccessible controls storage or a failed scope resolver refuses generation; there is no fallback that ignores stored policy. Controls and audit are independent of usage retention.
+
+### Credits and upgrade cutover
+
+Before applying migration `000003`, stop generation admissions and scheduled usage pruning, drain all old `pending`/`received` operations, then stop old generation workers. Publish/run the new migration and deploy the new writers before resuming admissions and pruning. Mixed-version rolling deployment is unsupported. The migration refuses unresolved legacy attempts and copies all remaining operation identities into durable tombstones without inventing historical scope/guard. Operation IDs already removed before upgrading cannot be reconstructed.
+
+Credit state is stored in plugin-owned periods, actor settings, balances and operation records. Usage retention never restores credits or makes an operation ID reusable. These durable records are intentionally not pruned. Quotas default to off; there is no default business limit. Explicitly configure a valid integer limit and `manual`, `daily`, `weekly` or `monthly` renewal before enabling them:
+
+```php
+$plugin = AiWriterPlugin::get();
+$context = $plugin->controlContext(); // Resolve on the server, never from request input.
+$credits = $plugin->credits();
+$credits->configure($context, true, 100, 'monthly', 'Initial allocation');
+$credits->setLimit($context, $selectedActor, 150, 'Individual allocation'); // null removes override
+$credits->grant($context, $selectedActor, 20, 'Extra credits for this period');
+$credits->reset($context, $selectedActor, 'Reset this user quota');
+$credits->renew($context, 'Start a new period for the scope');
+$adminBalance = $credits->balance($context, $selectedActor);
+$myBalance = $credits->ownBalance($context); // No target actor; canUseAi, no admin/statistics permission.
+```
+
+Administration rechecks the current context, management permission and explicit actor directory. Every adjustment requires a reason and commits together with its actual before/after audit entry. `policy($context)` reads quota settings. `ownBalance` validates the fresh actor/panel/guard/scope snapshot and cannot read another user's balance. Balance arrays contain `enabled`, effective `limit`, `individual_limit`, `extras`, `consumed`, `reserved`, `available`, `period_id`, `balance_id` and UTC `renews_at` (null for manual). Quotas off is indicated by `enabled=false`; an unconfigured limit/available is null.
+
+Limits and individual extra grants accept strict PHP integers, 0–2,147,483,647 (grants must be positive); a period's cumulative extras have the same technical bound. Counters use bigint and preserve historical consumption/reservations even when they exceed a reduced limit. Available is clamped at zero. Individual limits do not change the scope calendar. Extras and reset are different audited actions; reset starts a new balance without extras. Unused credits do not roll over. Day cuts are local midnight, weeks Monday midnight and months day 1 in the application timezone. A calendar edit preserves the current finite end; the new calendar takes effect when that period closes. Manual→calendar schedules the next cut of the new calendar while preserving the current balance until then.
+
+Each generation freezes whether it reserves a credit. Enabling quotas during a free generation never adds retroactive charges; off/on in the same period preserves already counted consumption. Renewal/reset keeps in-flight reservations in their original balance; a valid late completion debits that balance, leaving the new period unchanged. Failures release once; delivery and debit commit together, with field restoration on rollback. Credits are not a financial cost ceiling.
+
+The ledger's optional `connection` config must resolve to the **same connection instance** as the default controls/audit connection. A separate named connection is rejected even if it points at the same database, because separate transactions cannot guarantee atomic delivery. UsageRecorder also checks its actual query connection. Public `begin` and `delivered` reject outer transactions. `begin($generationContext)` is a ledger-only interface with durable deduplication and no credit admission; provider integrations must call `generation()->run()` to apply controls and quotas. Delivery uses the frozen operation scope/balance, without resolving the current tenant again.
+
+Managed generation deadlines freeze the validated generation `timeout` plus `recovery.margin_seconds` (default **30 seconds**, configurable nonnegative integer) at admission. Positive timeout and margin accept integer configuration values or decimal integer strings up to 2,147,483,647 seconds; invalid configuration refuses admission. Changing settings later cannot extend an admitted operation. This execution deadline also fences quota-off generations. Admission, response receipt and delivery enforce it, even without a scheduler. A delivery callback that crosses the deadline is restored and not charged.
+
+Run `php artisan ai-writer:recover-operations` to release expired reservations left by interrupted workers; the host may schedule it explicitly. Recovery and delivery compete for the same scope lock. Recovery marks a permanent terminal tombstone and releases the original reservation once; late workers cannot deliver or debit again. Expiry does not prove zero remote cost. The first known late response may update allowlisted metadata in an existing expired usage row without changing its terminal status; it never recreates pruned history. Direct ledger-only operations have no managed execution deadline. Outcome uncertainty is preserved separately from known HTTP status, IDs and measurements: a late HTTP 503 can retain outcome_unknown=true while preserving its measured usage.
 
 ### Scope and identity
 
@@ -536,7 +567,7 @@ php artisan ai-writer:prune-usage --days=90
 
 Days must be a positive integer. `retention.batch_size` defaults to 500 and must be 1–1000. No package scheduler is registered. A host may schedule this command deliberately after reviewing its own retention needs and CLI/operator access. The maintenance command spans the configured usage table across panels; it does not grant cross-panel statistics access to a panel viewer.
 
-Only terminal `delivered`/`failed` attempts with a completion timestamp are eligible. Both operation start and completion must be **strictly before** the effective cutoff: the earlier of now minus the configured days and the start of the current app-local calendar month, converted to UTC. This protects unresolved `pending`/`received` rows and any row started or completed during the current app-calendar month, even with a very short retention setting. Protecting this active period is conservative preparation for future quota counters; no quota implementation is included. Unresolved rows are never presumed free or completed by cleanup.
+Only terminal `delivered`/`failed` attempts with a completion timestamp are eligible. Both operation start and completion must be **strictly before** the effective cutoff: the earlier of now minus the configured days and the start of the current app-local calendar month, converted to UTC. This protects unresolved `pending`/`received` rows and any row started or completed during the current app-calendar month, even with a very short retention setting. Credit balances, reservations and permanent operation identities are stored separately and are never deleted by this command. Unresolved rows are never presumed free or completed by cleanup.
 
 Deletion selects bounded ID batches, freezes an upper ID for the run, and rechecks eligibility in each atomic DELETE. New/backdated inserts wait for a later explicit run. There is no whole-history transaction. Dry-run counts are observations at that read, not a concurrent snapshot guarantee. Successful output reports actual deleted rows and processed batches; on an error, the command returns failure and reports the already deleted count without raw database details. Earlier completed batches remain deleted. Repeating the command does not double-count prior deletion.
 

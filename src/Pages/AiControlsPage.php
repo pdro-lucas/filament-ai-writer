@@ -149,15 +149,42 @@ class AiControlsPage extends Page implements HasTable
         TextColumn::make('created_at')->label('Date / time')->dateTime('M j, Y H:i:s', timezone: config('app.timezone')),
         TextColumn::make('administrator_id')->label('Administrator')->wrap()
           ->tooltip(fn (ControlAudit $record): string => $record->administrator_type),
-        TextColumn::make('action')->label('Change')->formatStateUsing(fn (ControlAudit $record): string => $record->action === 'availability'
-          ? ($record->after['enabled'] ? 'AI enabled' : 'AI disabled') : ($record->after['blocked'] ? 'User blocked' : 'User unblocked')),
+        TextColumn::make('action')->label('Change')->formatStateUsing(fn (ControlAudit $record): string => match ($record->action) {
+          'availability' => $record->after['enabled'] ? 'AI enabled' : 'AI disabled',
+          'block' => $record->after['blocked'] ? 'User blocked' : 'User unblocked',
+          'quota_policy' => 'Credit policy updated',
+          'quota_limit' => 'User limit updated',
+          'quota_extra' => 'Extra credits granted',
+          'quota_reset' => 'User quota reset',
+          'quota_renew' => 'Credits renewed',
+          default => 'Controls updated',
+        }),
         TextColumn::make('actor_id')->label('User')->placeholder('All users')->wrap()
           ->tooltip(fn (ControlAudit $record): ?string => $record->actor_type),
-        TextColumn::make('before')->label('Before → after')->formatStateUsing(fn (ControlAudit $record): string => $record->action === 'availability'
-          ? (($record->before['enabled'] ? 'Enabled' : 'Disabled') . ' → ' . ($record->after['enabled'] ? 'Enabled' : 'Disabled'))
-          : (($record->before['blocked'] ? 'Blocked' : 'Allowed') . ' → ' . ($record->after['blocked'] ? 'Blocked' : 'Allowed'))),
+        TextColumn::make('before')->label('Before → after')->formatStateUsing(fn (ControlAudit $record): string => $this->auditSummary($record->action, $record->before) . ' → ' . $this->auditSummary($record->action, $record->after)),
         TextColumn::make('reason')->label('Reason')->wrap(),
       ])->emptyStateHeading('No changes recorded');
+  }
+
+  protected function auditSummary(string $action, array $values): string
+  {
+    if ($action === 'availability') {
+      return $values['enabled'] ? 'Enabled' : 'Disabled';
+    }
+    if ($action === 'block') {
+      return $values['blocked'] ? 'Blocked' : 'Allowed';
+    }
+    $labels = in_array($action, ['quota_policy', 'quota_renew'], true)
+      ? ['enabled' => 'Credits', 'limit' => 'Limit', 'renewal' => 'Renewal']
+      : ['limit' => 'Limit', 'extras' => 'Extras', 'consumed' => 'Used', 'reserved' => 'Reserved', 'available' => 'Available'];
+    $parts = [];
+    foreach ($labels as $key => $label) {
+      if (array_key_exists($key, $values)) {
+        $value = $values[$key];
+        $parts[] = $label . ': ' . (is_bool($value) ? ($value ? 'On' : 'Off') : ($value ?? 'Not configured'));
+      }
+    }
+    return implode(' · ', $parts) ?: '—';
   }
 
   public function getTableRecordsPerPage(): int

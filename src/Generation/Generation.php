@@ -26,10 +26,11 @@ class Generation
     $admission = AiWriterPlugin::get()->controls()->admit();
     $context = new GenerationContext($operationId ?? (string) \Illuminate\Support\Str::uuid(), $admission->panelId,
       $admission->actor->type, $admission->actor->id, $field, $actionName);
-    $this->recorder->begin($context);
+    $this->recorder->begin($context, $admission);
     $result = null;
     $quote = null;
     try {
+      $this->recorder->assertLive($context);
       $quote = $this->costs->quote(app(AiProvider::class)->generate($systemPrompt, $userInput));
       $result = $quote['result'];
       if (!$this->recorder->received($context, $quote)) {

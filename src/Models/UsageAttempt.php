@@ -29,6 +29,11 @@ class UsageAttempt extends Model
       : parent::asDateTime($value);
   }
 
+  public function getConnectionName()
+  {
+    return config('filament-ai-writer.connection') ?? parent::getConnectionName();
+  }
+
   public function getTable(): string
   {
     $table = config('filament-ai-writer.tables.usage', 'filament_ai_writer_usage');

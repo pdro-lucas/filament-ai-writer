@@ -1,7 +1,10 @@
 <?php
 return [
+  // Ledger and controls must resolve to the same connection instance.
+  "connection" => null,
   "tables" => ["usage" => "filament_ai_writer_usage"],
   "pricing" => [],
+  "recovery" => ["margin_seconds" => 30],
   "retention" => [
     "days" => env("AI_WRITER_RETENTION_DAYS"),
     "batch_size" => 500,

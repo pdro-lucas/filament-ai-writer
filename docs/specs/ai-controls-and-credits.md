@@ -1,6 +1,6 @@
 # Administração de IA, créditos e proteção contra abuso
 
-Status: etapa 1 concluída, com source, QA e revisão independente aprovados; Dique APPROVED final, sem blockers, e aceite do root com os limites registrados no relatório. Decisão inflight fechada: gerações já admitidas concluem, desligamento/bloqueio impedem novas admissões. Créditos, renovação e proteção contra abuso continuam pendentes.
+Status: etapas 1 e 2 concluídas. Etapa 2 com Dique APPROVED FINAL, zero blockers e 16/16 hashes conferidos; suites Filament 4.15.3 e 5.10.3 verdes (146 testes/1072 assertions), probes reais MySQL 8.4.11 e Workbench build preservando a demo. PostgreSQL não exercitado; QA visual é do usuário. Proteção contra abuso (etapa 3) e experiência completa (etapa 4) permanecem pendentes. Relatório de implementação: `/tmp/filament-stage2-implementation.md`; revisão final: `/tmp/filament-stage2-source-review.md`.
 
 ## Objetivo
 
@@ -16,6 +16,8 @@ Permitir que uma aplicação Filament controle a disponibilidade de IA, distribu
 | Ativação | Cotas desativadas por padrão. A chave de habilitar/desabilitar IA é independente das cotas. As permissões existentes continuam sendo aplicadas. |
 | Ativação e reativação | Sem desconto retroativo por gerações admitidas com cotas desligadas. Reativar preserva o consumo já contabilizado no mesmo período; não redefine a cota. |
 | Política | Limite e calendário padrão; cada usuário pode ter exceção no limite, mas não um calendário próprio. |
+| Recovery | Deadline congelado na admissão: timeout de geração + margem técnica configurável (padrão 30 segundos). Ao expirar, liberar uma vez sob lock e impedir definitivamente qualquer entrega tardia, mesmo antes da manutenção. Também vale para operações gerenciadas sem quota. |
+| Calendários | Dia 00h, semana segunda 00h, mês dia 1 no fuso da aplicação. Mudanças preservam o encerramento finito atual; manual→calendário encerra no próximo corte do novo calendário, preservando consumo até lá. |
 | Renovação | Administrador pode escolher manual, diária, semanal ou mensal, seguindo calendário e fuso da aplicação. |
 | Acúmulo | Não acumula sobra entre períodos. A renovação restaura o limite aplicável. |
 | Alteração de limite | Preserva consumo do período. Consumiu 60 e o limite passa a 150: 90 disponíveis. O limite passa a 50: nenhum disponível; o histórico continua registrando 60. |
@@ -51,7 +53,7 @@ O módulo de admissão deve centralizar as decisões usadas por todas as ações
 
 1. Resolver ator, painel, escopo e política no servidor; verificar permissões, habilitação e bloqueio.
 2. Verificar proteções contra abuso e reservar atomicamente um crédito, quando as cotas estiverem ativas, antes de qualquer chamada ao provider.
-3. Associar a reserva à identidade da operação e ao período de admissão. A mesma operação não inicia chamadas ou débitos duplicados.
+3. Associar a reserva à identidade da operação e ao período de admissão. A mesma operação não inicia chamadas ou débitos duplicados. Operações sem quota preservam esse caminho sem débito mesmo após ativação da política; reset/renovação mantêm a liquidação no saldo de origem.
 4. Executar HTTP fora de transações e locks de banco de longa duração.
 5. Confirmar um débito somente quando a entrega local for confirmada. Liquidação da cota e confirmação da entrega precisam compartilhar a mesma garantia transacional; uma falha na entrega ou na persistência não pode deixar texto aplicado e contabilidade incompatível.
 6. Liberar a reserva em falhas conhecidas sem entrega. Liquidação e liberação precisam ser idempotentes.
@@ -60,7 +62,7 @@ Uma geração parcialmente recebida, recusada ou truncada, sem entrega ao campo,
 
 Requisições concorrentes precisam disputar a mesma cota: com um crédito disponível, não podem ser admitidas duas gerações. Tentativas recusadas pela proteção não podem chegar ao provider. Falhas de armazenamento dos controles devem resultar em recusa segura quando a política estiver ativa.
 
-Reservas interrompidas por encerramento do processo exigem um procedimento de reconciliação. Não presumir que timeout significa ausência de custo remoto, nem liberar uma reserva e permitir uma conclusão tardia duplicar consumo ou entrega. O desenho dessa recuperação é um critério de entrada para implementar o módulo.
+Reservas interrompidas por encerramento do processo expiram após o deadline congelado. `ai-writer:recover-operations` reconcilia operações expiradas; os caminhos de admissão, resposta e entrega também verificam o prazo independentemente do comando. A expiração é terminal e libera a reserva de origem uma única vez sob o mesmo lock da entrega. Metadados conhecidos de uma resposta tardia podem enriquecer somente histórico existente, preservando a primeira resposta e sem reabrir operação, refazer débito ou recriar uso podado. Não presumir que timeout significa ausência de custo remoto, nem liberar uma reserva e permitir uma conclusão tardia duplicar consumo ou entrega. O desenho dessa recuperação é um critério de entrada para implementar o módulo.
 
 ## Integração e isolamento
 
@@ -84,6 +86,8 @@ Definir e revisar o contrato de escopo/identidade, a integração de usuários, 
 Critério: um usuário não autorizado não administra configurações; um bloqueio ou desligamento impede chamada ao provider; escopos não se misturam.
 
 ### 2. Créditos e renovação
+
+Concluída: `Credits` centraliza política, saldo próprio/admin, reservas, liquidação/refund, renovação, extras/reset auditados e recuperação com deadline/fencing. `UsageRecorder` compartilha admissão e entrega transacional na mesma conexão, com identidade durável independente de retenção e preservação de medições tardias. Migration 000003 publicável; cutover quiescente documentado, sem suporte a rolling misto. Verificações e limites efetivos constam do relatório acima.
 
 Implementar reserva, confirmação/liberação, renovação, exceções de limite, concessões e redefinição manual. Integrar à entrega transacional existente sem manter locks durante HTTP.
 
@@ -127,3 +131,5 @@ A entrega deve registrar comandos executados, cenários reais na Workbench, novo
 - `src/Usage/UsagePruner.php`: retenção opt-in; histórico removível não pode ser a única fonte de quota.
 
 A memória histórica recuperada também recomenda reserva atômica antes do provider e liquidação idempotente. Essas recomendações foram comparadas com o código atual; os controles de quotas continuam pendentes.
+
+Decisão aprovada para etapa 3: falhas em janela configurável, sucesso não zera outras falhas recentes; thresholds, janela e cooldown administráveis, proteção off por padrão. Não implementado na etapa 2.

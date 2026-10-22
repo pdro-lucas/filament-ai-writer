@@ -30,7 +30,7 @@ class FilamentAiWriterServiceProvider extends ServiceProvider
   public function boot(): void
   {
     if ($this->app->runningInConsole()) {
-      $this->commands([\PdroLucas\FilamentAiWriter\Console\PruneUsageCommand::class]);
+      $this->commands([\PdroLucas\FilamentAiWriter\Console\PruneUsageCommand::class, \PdroLucas\FilamentAiWriter\Console\RecoverOperationsCommand::class]);
     }
 
     $this->loadViewsFrom(__DIR__ . "/../resources/views", "filament-ai-writer");
@@ -38,6 +38,7 @@ class FilamentAiWriterServiceProvider extends ServiceProvider
     $this->publishesMigrations([
       __DIR__ . "/../database/migrations/2026_10_21_000001_create_ai_writer_usage_table.php" => database_path("migrations/2026_10_21_000001_create_ai_writer_usage_table.php"),
       __DIR__ . "/../database/migrations/2026_10_21_000002_create_ai_writer_controls_tables.php" => database_path("migrations/2026_10_21_000002_create_ai_writer_controls_tables.php"),
+      __DIR__ . "/../database/migrations/2026_10_21_000003_create_ai_writer_credits_tables.php" => database_path("migrations/2026_10_21_000003_create_ai_writer_credits_tables.php"),
     ], "filament-ai-writer-migrations");
 
     $this->publishes(

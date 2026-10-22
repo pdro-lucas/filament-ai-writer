@@ -49,17 +49,23 @@ final class Controls
       throw new GenerationFailure('controls');
     }
     try {
-      if (!$this->readEnabled($context)) {
-        throw new GenerationFailure('disabled');
-      }
-      if ($this->readBlocked($context, $context->actor)) {
-        throw new GenerationFailure('blocked');
-      }
+      $this->assertAdmission($context);
       return $context;
     } catch (GenerationFailure $failure) {
       throw $failure;
     } catch (Throwable) {
       throw new GenerationFailure('storage');
+    }
+  }
+
+  /** Internal admission seam; caller owns the stable scope lock and frozen server context. */
+  public function assertAdmission(ControlContext $context): void
+  {
+    if (!$this->readEnabled($context)) {
+      throw new GenerationFailure('disabled');
+    }
+    if ($this->readBlocked($context, $context->actor)) {
+      throw new GenerationFailure('blocked');
     }
   }
 
@@ -86,7 +92,7 @@ final class Controls
     if ($reason === '' || mb_strlen($reason) > 500 || !mb_check_encoding($reason, 'UTF-8') || preg_match('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/', $reason)) {
       throw ValidationException::withMessages(['reason' => 'Enter a reason of at most 500 characters.']);
     }
-    DB::transaction(function () use ($context, $action, $actor, $value, $reason): void {
+    app(\PdroLucas\FilamentAiWriter\Credits\Credits::class)->connection()->transaction(function () use ($context, $action, $actor, $value, $reason): void {
       // Unique insert arbitrates first writers; every change then locks the same scope row.
       DB::table('filament_ai_writer_policies')->insertOrIgnore(['scope_key' => $context->scopeKey(), 'scope' => $context->scope, 'enabled' => true]);
       $policy = DB::table('filament_ai_writer_policies')->where('scope_key', $context->scopeKey())->lockForUpdate()->first();
