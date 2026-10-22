@@ -17,6 +17,7 @@ use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
 use Livewire\Attributes\Locked;
 use PdroLucas\FilamentAiWriter\AiWriterPlugin;
+use PdroLucas\FilamentAiWriter\Controls\ActorIdentity;
 use PdroLucas\FilamentAiWriter\Models\UsageAttempt;
 use PdroLucas\FilamentAiWriter\Usage\UsageStatistics;
 
@@ -35,6 +36,8 @@ class UsageStatisticsPage extends Page implements HasTable
 
   // Server-derived menu display state; actual dates remain authoritative.
   public string $periodPreset = '7';
+
+  protected array $actorLabels = [];
 
   public static function canAccess(): bool
   {
@@ -85,8 +88,8 @@ class UsageStatisticsPage extends Page implements HasTable
       ])
       ->columns([
         TextColumn::make('started_at')->label('Date / time')->dateTime('M j, H:i:s', timezone: config('app.timezone'))->sortable(),
-        TextColumn::make('actor_id')->label('User')->formatStateUsing(fn (UsageAttempt $record): string => $record->actor_id)
-          ->description(fn (UsageAttempt $record): string => class_basename($record->actor_type))->wrap(),
+        TextColumn::make('actor_id')->label('User')
+          ->formatStateUsing(fn (UsageAttempt $record): string => $this->actorLabel($record))->wrap(),
         TextColumn::make('status')->label('Result')->badge()
           ->formatStateUsing(fn (string $state): string => match ($state) { 'delivered' => 'Success', 'failed' => 'Failure', default => 'In progress' })
           ->color(fn (string $state): string => match ($state) { 'delivered' => 'success', 'failed' => 'danger', default => 'warning' }),
@@ -155,6 +158,26 @@ class UsageStatisticsPage extends Page implements HasTable
       ->options(fn (): array => $this->statistics()->options($kind))
       ->getSearchResultsUsing(fn (string $search): array => $this->statistics()->options($kind, $search))
       ->getOptionLabelUsing(fn (string $value): ?string => $this->statistics()->optionLabel($kind, $value));
+  }
+
+  protected function actorLabel(UsageAttempt $record): string
+  {
+    $this->authorizeContext();
+    $key = UsageStatistics::actorKey($record->actor_type, $record->actor_id);
+    if (!array_key_exists($key, $this->actorLabels)) {
+      $this->actorLabels[$key] = 'User unavailable';
+      $plugin = AiWriterPlugin::get();
+      // Reuse the existing authorized directory without granting statistics viewers management access.
+      try {
+        if ($plugin->canManage() && $plugin->hasActorDirectory()) {
+          $actor = new ActorIdentity($record->actor_type, $record->actor_id);
+          $this->actorLabels[$key] = $plugin->resolveActor($actor->token(), $plugin->controlContext())?->label ?: 'User unavailable';
+        }
+      } catch (\Throwable) {
+        // Removed users and unavailable host directories must not hide usage history.
+      }
+    }
+    return $this->actorLabels[$key];
   }
 
   protected function getViewData(): array

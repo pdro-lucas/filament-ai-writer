@@ -1,13 +1,13 @@
 <style>
-    .ai-usage, .ai-usage-detail { --ai-usage-line: var(--gray-200); --ai-usage-muted: var(--gray-600); --ai-usage-surface: #fff; min-width: 0; font-size: .8125rem; line-height: 1.5; }
-    .dark .ai-usage, .dark .ai-usage-detail { --ai-usage-line: var(--gray-800); --ai-usage-muted: var(--gray-400); --ai-usage-surface: #111113; }
+    .ai-usage, .ai-usage-detail { --ai-usage-line: var(--color-gray-200); --ai-usage-muted: var(--color-gray-600); min-width: 0; font-size: .8125rem; line-height: 1.5; }
+    .dark .ai-usage, .dark .ai-usage-detail { --ai-usage-line: var(--color-gray-800); --ai-usage-muted: var(--color-gray-400); }
     .ai-usage { display: grid; gap: 1rem; }
     .ai-usage-toolbar, .ai-usage-controls { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem; }
     .ai-usage-toolbar { justify-content: space-between; }
     .ai-usage-muted { color: var(--ai-usage-muted); font-size: .75rem; overflow-wrap: anywhere; }
     .ai-usage-coverage summary:focus-visible { outline: 2px solid var(--primary-500); outline-offset: 3px; }
     .ai-usage-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .75rem; }
-    .ai-usage-metrics > div { min-width: 0; padding: 1rem; border: 1px solid var(--ai-usage-line); border-radius: .625rem; background: var(--ai-usage-surface); box-shadow: 0 1px 2px rgb(0 0 0 / 3%); }
+    .ai-usage-metrics > div { min-width: 0; padding: 1rem; }
     .ai-usage-metrics dt { font-weight: 500; color: var(--ai-usage-muted); }
     .ai-usage-value { font-size: 1.5rem; line-height: 1.4; font-weight: 500; margin: .25rem 0; letter-spacing: -.025em; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
     .ai-usage-coverage { margin-top: .25rem; }
@@ -20,7 +20,7 @@
     .ai-usage-preset[aria-pressed="true"] { font-weight: 600; }
     .ai-usage-preset:focus-visible { outline: 2px solid var(--primary-500); outline-offset: 2px; }
     .ai-usage-preset-check { width: 1rem; height: 1rem; flex-shrink: 0; }
-    .ai-usage-requests { min-width: 0; border: 1px solid var(--ai-usage-line); border-radius: .625rem; background: var(--ai-usage-surface); overflow: hidden; }
+    .ai-usage-requests { min-width: 0; overflow: hidden; }
     .ai-usage-chart .fi-section, .ai-usage-history .fi-ta-ctn { border: 0; border-radius: 0; box-shadow: none; background: transparent; }
     .ai-usage-chart .fi-section-header { padding: .75rem 1rem .25rem; border: 0; }
     .ai-usage-chart .fi-section-header-heading { font-size: .8125rem; }

@@ -50,15 +50,15 @@
         </div>
 
         <dl class="ai-usage-metrics" aria-label="Usage overview">
-            <div>
+            <div class="fi-section">
                 <dt>Requests</dt><dd class="ai-usage-value">{{ number_format($summary['attempts']) }}</dd>
                 <dd class="ai-usage-muted">{{ number_format($summary['delivered']) }} success · {{ number_format($summary['failed']) }} failure · {{ number_format($summary['active']) }} in progress</dd>
             </div>
-            <div>
+            <div class="fi-section">
                 <dt>Tokens consumed</dt><dd class="ai-usage-value">{{ $measuredTokens ? $tokens : 'Unavailable' }}</dd>
                 <dd class="ai-usage-muted">Input + output{{ $measuredTokens < $summary['attempts'] * 2 ? ' · Partial' : '' }} · {{ $measuredTokens }}/{{ $summary['attempts'] * 2 }} counters measured</dd>
             </div>
-            <div>
+            <div class="fi-section">
                 <dt>Costs <span class="ai-usage-muted">USD</span></dt><dd class="ai-usage-value">{{ $knownCost ? '$' . rtrim(rtrim($cost, '0'), '.') : 'Unavailable' }}</dd>
                 <dd class="ai-usage-muted">{{ $summary['unknown_cost'] && $knownCost ? 'Partial · ' : '' }}{{ $knownCost }}/{{ $summary['attempts'] }} known{{ $summary['estimated_cost_count'] ? ' · Includes estimates' : '' }}</dd>
                 <dd>
@@ -68,13 +68,13 @@
                     </details>
                 </dd>
             </div>
-            <div>
+            <div class="fi-section">
                 <dt>Average duration</dt><dd class="ai-usage-value">{{ $duration['known'] ? number_format((float) $duration['total'] / $duration['known'] / 1000, 2) . ' s' : 'Unavailable' }}</dd>
                 <dd class="ai-usage-muted">HTTP · {{ $duration['known'] }}/{{ $summary['attempts'] }} measured{{ $duration['unknown'] && $duration['known'] ? ' · Partial' : '' }}</dd>
             </div>
         </dl>
 
-        <div class="ai-usage-requests">
+        <div class="ai-usage-requests fi-section">
             <div class="ai-usage-chart">
                 @livewire(\PdroLucas\FilamentAiWriter\Widgets\UsageCountChart::class, ['panelId' => $panel, 'sharedFilters' => $filters], key('usage-' . $panel . '-' . hash('sha256', json_encode($filters))))
                 <div class="ai-usage-chart-data">

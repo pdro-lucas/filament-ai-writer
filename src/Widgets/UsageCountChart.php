@@ -61,7 +61,7 @@ class UsageCountChart extends ChartWidget
       'datasets' => [[
         'label' => 'Requests',
         'data' => array_map(fn (array $row): int => $row['delivered'] + $row['failed'] + $row['active'], $rows),
-        'backgroundColor' => '#16a34a', 'borderWidth' => 0, 'borderRadius' => 2, 'maxBarThickness' => 48,
+        'borderWidth' => 0, 'borderRadius' => 2, 'maxBarThickness' => 48,
       ]],
     ];
   }
