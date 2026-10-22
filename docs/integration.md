@@ -3,6 +3,7 @@
 This guide complements the [README](../README.md). All examples use the existing Filament 4/5 action and schema APIs. Adapt host model fields and permissions to your application; the plugin does not infer them.
 
 - [Panel setup and a scoped actor directory](#panel-setup-and-a-scoped-actor-directory)
+- [Filament Shield, roles and business rules](#filament-shield-roles-and-business-rules)
 - [Choose what to disable](#choose-what-to-disable)
 - [Manage AI in your own surfaces](#manage-ai-in-your-own-surfaces)
 - [Place the writing action](#place-the-writing-action)
@@ -87,6 +88,68 @@ Without custom callbacks, authenticated panel actors may use AI; management and 
 The default control scope is `panel:<panel id>`. A custom stable scope deliberately shares availability, blocks, quota periods, protections and audit among panels returning that string. Scope and actor values must be nonempty UTF-8 strings of at most 255 bytes without control characters. A resolver does not grant access; host authorization must protect the resolved scope. Usage statistics remain **panel-scoped**, showing all actors in that panel; a tenant control scope does not make the statistics page tenant-filtered. Grant statistics only to viewers allowed to see the whole panel's metadata.
 
 The built-in pages freeze context at mount and reject changed panel/guard/scope/actor or revoked permission on later requests. Reopen after switching accounts or tenants. `canUseAi()` is a permission check; it does not itself read availability, balance or abuse state. Generation checks those at admission.
+
+## Filament Shield, roles and business rules
+
+The authorization callbacks can delegate to Laravel's Gate, including permissions managed by **Filament Shield / Spatie Laravel Permission**. AI Writer does not require or install either package, register Shield permissions automatically, or assume role names. Configure Shield in the host application first, including its user model, guard and any teams/tenancy integration.
+
+For Shield 4.x, merge custom permissions into `config/filament-shield.php` and enable their tab in the Role Resource. The following names are examples; retain your other settings:
+
+```php
+'custom_permissions' => [
+    'Use:AiWriter' => 'Use AI Writer',
+    'View:AiWriterUsage' => 'View AI usage',
+    'Manage:AiWriter' => 'Manage AI access and credits',
+],
+
+'shield_resource' => [
+    // Keep your other Shield resource settings.
+    'tabs' => [
+        // Keep your other tab settings.
+        'custom_permissions' => true,
+    ],
+],
+```
+
+Create/synchronize the permissions using your host's Shield setup or seeder, then assign them to roles in its Role Resource. Use the **actual stored permission names** in the callbacks: Shield can format keys according to its configured case/separator. See Shield's [custom permissions documentation](https://filamentphp.com/plugins/bezhansalleh-shield#custom-permissions) for the configuration supported by your installed version.
+
+Connect those permissions to the plugin in your PanelProvider:
+
+```php
+use Illuminate\Support\Facades\Gate;
+use PdroLucas\FilamentAiWriter\AiWriterPlugin;
+
+AiWriterPlugin::make()
+    ->authorizeUseAiUsing(fn ($user, $panel): bool =>
+        Gate::forUser($user)->allows('Use:AiWriter'))
+    ->authorizeViewStatisticsUsing(fn ($user, $panel): bool =>
+        Gate::forUser($user)->allows('View:AiWriterUsage'))
+    ->authorizeManageUsing(fn ($user, $panel): bool =>
+        Gate::forUser($user)->allows('Manage:AiWriter'));
+```
+
+For example, a Writer role can receive only `Use:AiWriter`, an Analyst only `View:AiWriterUsage`, and an AI Administrator only `Manage:AiWriter`. Give a role multiple permissions when it needs multiple capabilities. Assign users to roles through the host's existing user-management flow. Removing a permission changes subsequent authorization checks; hiding a navigation entry alone does not revoke access.
+
+The permission guard must match the panel's authenticated actor. With Spatie teams or tenant-aware permissions, establish the host's authorized team context before checking Gate. AI Writer's `resolveScopeUsing()` defines its control/credit scope; it does not configure Shield teams automatically. Statistics authorization covers all metadata in the current panel, so grant that permission accordingly.
+
+Gate-based checks also honor a host's Super Admin rule implemented with `Gate::before()`. Direct `hasPermissionTo()` checks bypass that Gate override, as explained in Spatie's [Super Admin documentation](https://github.com/spatie/laravel-permission/blob/main/docs/basic-usage/super-admin.md). A permission grant still does not bypass AI Writer's availability, user blocks, quotas or abuse protections.
+
+Roles are one way to assign permissions. A callback may also combine the permission with host business rules, such as user type or plan. In this example, `StaffUser` is an illustrative host model:
+
+```php
+use App\Models\StaffUser;
+use Illuminate\Support\Facades\Gate;
+use PdroLucas\FilamentAiWriter\AiWriterPlugin;
+
+AiWriterPlugin::make()
+    ->authorizeUseAiUsing(fn ($user): bool =>
+        $user instanceof StaffUser
+        && Gate::forUser($user)->allows('Use:AiWriter'));
+```
+
+A focused isolated validation used Shield **4.3.1**, Spatie Laravel Permission **8.3.2**, Filament **5.10.3**, Laravel **12.70.1** and PHP **8.5.0**, with SQLite in memory and fake provider HTTP. It exercised custom permission keys, separate role capabilities, successful generation, permission revocation and Shield's Gate-based Super Admin while retaining AI availability enforcement (1 test / 21 assertions). Shield was installed only in the temporary validation project, not added to this package. This does not claim a Shield Role Resource browser test, teams/tenancy validation or a Shield-plus-Filament-4 runtime matrix.
+
+The host owns those rules; the plugin rechecks the configured callbacks on the server. Its built-in administrative UI controls availability per scope and blocks per user, not role policies or role-specific credit limits. Already admitted generations retain their delivery rights when a later policy change denies new requests.
 
 ## Choose what to disable
 

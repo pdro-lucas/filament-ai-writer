@@ -92,6 +92,8 @@ Callbacks receive the authenticated actor from that panel's guard and the panel 
 
 The action enforces registration, the panel's use permission and any host action-level authorization on the server before running generation hooks or contacting the provider. Interactive and silent actions use the same checks. Permissions are checked again on later requests, including submission of a modal opened before permission was revoked. A host `->authorize(true)` cannot bypass plugin authorization; host action authorization can further restrict access.
 
+These callbacks can use permissions managed by **Filament Shield / Spatie Laravel Permission**, or host rules based on roles, user types and plans. See the [Shield and business-rule examples](docs/integration.md#filament-shield-roles-and-business-rules) for custom permissions, role assignment, Gate callbacks, guards and Super Admin behavior. Neither permission package is a dependency of AI Writer.
+
 ## Controls, credits and integration
 
 The plugin ships three native panel pages:
