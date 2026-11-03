@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.1](https://github.com/pdro-lucas/filament-ai-writer/compare/v0.7.0...v0.7.1) (2026-11-03)
+
+
+### Documentation
+
+* fix config publish command ([#23](https://github.com/pdro-lucas/filament-ai-writer/issues/23)) ([b9e34cf](https://github.com/pdro-lucas/filament-ai-writer/commit/b9e34cfa58695d2bda301a977c69717b176c54ca))
+
 ## [0.7.0](https://github.com/pdro-lucas/filament-ai-writer/compare/v0.6.2...v0.7.0) (2026-10-21)
 
 
