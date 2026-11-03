@@ -54,7 +54,7 @@ AI_WRITER_RETRY_SLEEP_MS=500
 If you need to customize the full configuration, publish the config file:
 
 ```bash
-php artisan vendor:publish --tag=filament-ai-writer-config
+php artisan vendor:publish --tag=filament-ai-writer
 ```
 
 This creates `config/filament-ai-writer.php` in your project where you can set per-provider models, API keys, and token limits. Publishing is optional — the package works with just the `.env` variables.
