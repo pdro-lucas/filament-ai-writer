@@ -5,7 +5,7 @@
       {{ $label }}
     </x-filament::button>
   @elseif ($visible)
-    <x-filament::dropdown placement="bottom-end" :teleport="true" width="xs">
+    <x-filament::dropdown placement="bottom-end" :teleport="true" :shift="true" width="xs">
       <x-slot name="trigger">
         <x-filament::button size="sm" :color="$color" :icon="$icon" :aria-label="$label . '. ' . $tooltip" aria-haspopup="true">
           {{ $label }}
