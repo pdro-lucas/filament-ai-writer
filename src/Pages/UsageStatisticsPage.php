@@ -118,10 +118,11 @@ class UsageStatisticsPage extends Page implements HasTable
   {
     $state = $this->getRawTableFilterState($name);
     if ($name === 'period' && $state !== null) {
-      // Adapt only the picker's exact midnight representation; strict period validation owns parsing.
+      // These date-only pickers may carry a time (some Filament versions keep the current time on defaults).
+      // Keep only the date part; strict period validation still owns parsing the date itself.
       foreach (['from', 'until'] as $boundary) {
         $value = $state[$boundary] ?? null;
-        if (is_string($value) && preg_match('/^\d{4}-\d{2}-\d{2} 00:00:00$/D', $value)) {
+        if (is_string($value) && preg_match('/^\d{4}-\d{2}-\d{2} (?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d$/D', $value)) {
           $state[$boundary] = substr($value, 0, 10);
         }
       }

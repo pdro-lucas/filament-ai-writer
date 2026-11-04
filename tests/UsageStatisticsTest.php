@@ -134,11 +134,27 @@ class UsageStatisticsTest extends TestCase
     $this->assertSame(['from' => '2026-10-15', 'until' => '2026-10-21'], $page->instance()->getTableFilterState('period'));
   }
 
-  public function test_page_period_boundary_rejects_malformed_picker_state_without_normalizing_it(): void
+  public function test_period_picker_state_with_a_time_of_day_renders_and_filters_by_date(): void
+  {
+    $this->login();
+    $this->row('demo', ['started_at' => '2026-10-14 23:59:59']);
+    $this->row('demo', ['started_at' => '2026-10-15 00:00:00']);
+    $this->row('demo', ['started_at' => '2026-10-15 23:59:59']);
+    $this->row('demo', ['started_at' => '2026-10-16 00:00:00']);
+    // Filament 5.6 keeps the current time on the date-only pickers' default state (#25).
+    \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\UsageStatisticsPage::class)
+      ->set('tableFilters.period', ['from' => '2026-10-15 09:09:37', 'until' => '2026-10-15 09:09:37'])
+      ->assertOk()->assertSee('AI Writer usage')
+      ->assertCountTableRecords(2)
+      ->assertViewHas('filters', fn (array $filters): bool => $filters['period'] === ['from' => '2026-10-15', 'until' => '2026-10-15'])
+      ->assertViewHas('summary', fn (array $summary): bool => $summary['attempts'] === 2);
+  }
+
+  public function test_page_period_boundary_rejects_malformed_picker_state(): void
   {
     $this->login();
     $page = \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\UsageStatisticsPage::class)->instance();
-    foreach (['2026-02-31', '2026-02-31 00:00:00', 'tomorrow', 'garbage', '2026-10-15 12:00:00', '2026-10-15T00:00:00Z', ['2026-10-15']] as $invalid) {
+    foreach (['2026-02-31', '2026-02-31 00:00:00', '2026-02-31 09:09:37', '2026-10-15 24:00:00', 'tomorrow', 'garbage', '2026-10-15T00:00:00Z', ['2026-10-15']] as $invalid) {
       $page->tableFilters['period'] = ['from' => $invalid, 'until' => '2026-10-21'];
       try {
         $page->getFilteredTableQuery()->count();
