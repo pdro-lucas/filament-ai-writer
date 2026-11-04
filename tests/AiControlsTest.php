@@ -3,6 +3,7 @@
 namespace PdroLucas\FilamentAiWriter\Tests;
 
 use Filament\Facades\Filament;
+use Filament\Panel;
 use Filament\Actions\Testing\TestAction;
 use PdroLucas\FilamentAiWriter\Tests\Fixtures\HostAiUserPage;
 use Illuminate\Foundation\Testing\DatabaseMigrations;
@@ -90,6 +91,103 @@ class AiControlsTest extends TestCase
     $this->assertSame(2, $controls->audit($context)->count());
   }
 
+  public function test_reason_is_required_by_default_for_person_actions_and_everywhere_or_nowhere_when_configured(): void
+  {
+    $this->login();
+    $plugin = AiWriterPlugin::get();
+    $actor = $plugin->controlContext()->actor;
+    $plugin->actorDirectoryUsing(fn () => [$actor], fn () => $actor);
+    $context = $plugin->controlContext();
+    $plugin->credits()->configure($context, true, 10, 'manual');
+    $controls = $plugin->controlsService();
+    $credits = $plugin->credits();
+    $this->assertNull($plugin->getRequireReason());
+
+    // Default: global settings and pausing AI take no reason (the audit stores none); people and renew-all do, refused on the server.
+    $controls->setEnabled($context, false);
+    $controls->setEnabled($context, true, '  ');
+    $this->assertSame([null, null], $controls->audit($context)->where('action', 'availability')->orderBy('id')->pluck('reason')->all());
+    $personActions = [
+      'block' => fn (?string $reason) => $controls->setBlocked($context, $actor, true, $reason),
+      'limit' => fn (?string $reason) => $credits->setLimit($context, $actor, 3, $reason),
+      'extra' => fn (?string $reason) => $credits->grant($context, $actor, 2, $reason),
+      'reset' => fn (?string $reason) => $credits->reset($context, $actor, $reason),
+      'renew' => fn (?string $reason) => $credits->renew($context, $reason),
+    ];
+    $audits = $controls->audit($context)->count();
+    foreach ($personActions as $name => $run) {
+      try {
+        $run(' ');
+        $this->fail($name . ' must require a reason by default');
+      } catch (\Illuminate\Validation\ValidationException $exception) {
+        $this->assertArrayHasKey('reason', $exception->errors());
+      }
+    }
+    $this->assertSame($audits, $controls->audit($context)->count(), 'Refused actions leave no change or audit entry.');
+    $this->assertFalse($controls->blocked($context, $actor));
+
+    // requireReason(true) makes every action need one, including global settings.
+    $plugin->requireReason(true);
+    $this->assertTrue($plugin->getRequireReason());
+    foreach (['availability' => fn () => $controls->setEnabled($context, false), 'quota_policy' => fn () => $credits->configure($context, true, 10, 'manual'),
+      'abuse_policy' => fn () => $plugin->abuse()->configure($context, ['rate_enabled' => false])] as $name => $run) {
+      try {
+        $run();
+        $this->fail($name . ' must require a reason with requireReason(true)');
+      } catch (\Illuminate\Validation\ValidationException) {
+        $this->addToAssertionCount(1);
+      }
+    }
+    $controls->setEnabled($context, false, 'Maintenance');
+
+    // requireReason(false) requires none, and a Closure sees the panel and the audited action.
+    $plugin->requireReason(false);
+    $controls->setBlocked($context, $actor, true);
+    $credits->grant($context, $actor, 2);
+    $this->assertNull($controls->audit($context)->where('action', 'block')->sole()->reason);
+    $seen = [];
+    $plugin->requireReason(function (Panel $panel, string $action) use (&$seen): ?bool { $seen[] = [$panel->getId(), $action]; return $action === 'block' ? true : null; });
+    $this->assertTrue($plugin->isReasonRequired('block'));
+    $this->assertFalse($plugin->isReasonRequired('availability'));
+    $this->assertTrue($plugin->isReasonRequired('quota_reset'));
+    $this->assertSame(['demo', 'block'], $seen[0]);
+  }
+
+  public function test_pausing_ai_is_one_click_and_blocking_needs_a_reason_and_a_dialog_by_default(): void
+  {
+    $this->login();
+    $plugin = AiWriterPlugin::get();
+    $actor = $plugin->controlContext()->actor;
+    $plugin->actorDirectoryUsing(fn () => [$actor], fn () => $actor);
+    $context = $plugin->controlContext();
+    $controls = $plugin->controlsService();
+    $page = \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\AiControlsPage::class);
+
+    // Pause and resume: no dialog, no reason, and the change is audited with who and what changed.
+    $page->mountAction('disable')->assertActionNotMounted()->assertNotified('AI controls updated');
+    $this->assertFalse($controls->enabled($context));
+    $audit = $controls->audit($context)->sole();
+    $this->assertSame(['availability', null, ['enabled' => true], ['enabled' => false]], [$audit->action, $audit->reason, $audit->before, $audit->after]);
+    $this->assertSame($context->actor->id, $audit->administrator_id);
+    $page->mountAction('enable')->assertActionNotMounted();
+    $this->assertTrue($controls->enabled($context));
+    // Global settings take an optional reason too, so saving them is one click as well.
+    $page->fillForm(['rate_enabled' => true, 'rate_limit' => '5', 'rate_window_seconds' => '60'], 'rateForm')
+      ->call('confirmSettings', 'rate')->assertActionNotMounted();
+    $this->assertTrue($plugin->abuse()->policy($context)['rate_enabled']);
+    $this->assertNull($controls->audit($context)->where('action', 'abuse_policy')->sole()->reason);
+
+    // Blocking a person opens a dialog, refuses an empty reason on the server and records the reason.
+    $page = \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\AiControlsPage::class)->call('showSection', 'users')
+      ->mountAction(TestAction::make('manageAiUser')->table($actor->token()))
+      ->mountAction('block')->assertActionMounted('block');
+    $page->setActionData(['reason' => ''])->callMountedAction()->assertHasActionErrors(['reason' => 'required']);
+    $this->assertFalse($controls->blocked($context, $actor));
+    $page->setActionData(['reason' => 'Abuse reported'])->callMountedAction()->assertHasNoActionErrors();
+    $this->assertTrue($controls->blocked($context, $actor));
+    $this->assertSame('Abuse reported', $controls->audit($context)->where('action', 'block')->sole()->reason);
+  }
+
   public function test_reason_validation_and_audit_failure_rollback_first_policy_and_existing_block_mutations(): void
   {
     $this->login();
@@ -97,7 +195,7 @@ class AiControlsTest extends TestCase
     $actor = $plugin->controlContext()->actor;
     $plugin->actorDirectoryUsing(fn () => [$actor], fn () => $actor);
     $context = $plugin->controlContext();
-    foreach ([' ', str_repeat('a', 501)] as $reason) {
+    foreach ([str_repeat('a', 501), "bad\x07reason"] as $reason) {
       try {
         $plugin->controlsService()->setEnabled($context, false, $reason);
         $this->fail('Must validate reason');
@@ -165,6 +263,8 @@ class AiControlsTest extends TestCase
     $page->call('$refresh')->assertForbidden();
     $this->assertTrue($plugin->controlsService()->enabled($plugin->controlContext()));
     $scope = 'tenant:A';
+    // These flows exercise the reason dialog, which only appears when a reason is required here.
+    $plugin->requireReason(true);
     $page = \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\AiControlsPage::class)->mountAction('enable')->setActionData(['reason' => 'Attempted bypass']);
     $plugin->authorizeManage(fn () => false);
     $page->callMountedAction()->assertForbidden();
@@ -493,7 +593,7 @@ class AiControlsTest extends TestCase
       app(\Filament\Support\Livewire\Partials\PartialsComponentHook::class)->forceRender($component);
     });
     try {
-      $plugin = AiWriterPlugin::get();
+      $plugin = AiWriterPlugin::get()->requireReason(true);
       $context = $plugin->controlContext();
       $page = \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\AiControlsPage::class);
       foreach (['1.5', '1e3', '2147483648', '-1'] as $invalid) {
@@ -1029,8 +1129,8 @@ class AiControlsTest extends TestCase
     }
     \Illuminate\Support\Facades\DB::unprepared('DROP TRIGGER reject_audit');
     try {
-      $abuse->configure($context, ['rate_enabled' => false], ' ');
-      $this->fail('Reason is mandatory');
+      $abuse->configure($context, ['rate_enabled' => false], str_repeat('a', 501));
+      $this->fail('An invalid reason must be refused');
     } catch (\Illuminate\Validation\ValidationException) {
       $this->assertTrue($abuse->policy($context)['rate_enabled']);
     }

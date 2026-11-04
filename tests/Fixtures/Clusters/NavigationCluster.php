@@ -1,6 +1,6 @@
 <?php
 
-namespace PdroLucas\FilamentAiWriter\Tests\Fixtures;
+namespace PdroLucas\FilamentAiWriter\Tests\Fixtures\Clusters;
 
 use Filament\Clusters\Cluster;
 

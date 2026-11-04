@@ -49,11 +49,14 @@ final class ControlFields
       ->modalSubmitAction(false)->modalCancelActionLabel('Close');
   }
 
-  public static function reasonField(): Textarea
+  /** @param string $action The audited action ('block', 'availability', 'quota_renew' ...): the plugin decides if it needs a reason. */
+  public static function reasonField(string $action): Textarea
   {
-    return Textarea::make('reason')->label('Reason')->required()->maxLength(500)->rows(3)->autofocus()
-      ->placeholder('e.g. Temporary access change requested by the team.')
-      ->helperText('Required. Saved with the administrator, user and date in Activity.')
+    return Textarea::make('reason')->label(__('Reason'))->required(fn (): bool => Reason::isRequired($action))->maxLength(500)->rows(3)->autofocus()
+      ->placeholder(__('e.g. Temporary access change requested by the team.'))
+      ->helperText(fn (): string => Reason::isRequired($action)
+        ? __('Required. Saved with the administrator, user and date in Activity.')
+        : __('Optional. Saved with the administrator, user and date in Activity.'))
       ->hintAction(self::informationAction('reason', 'Reason for this change', 'Explain why this administrative change is needed. The reason is visible to administrators in Activity. Your explanation is included in the audit record after confirmation.'));
   }
 

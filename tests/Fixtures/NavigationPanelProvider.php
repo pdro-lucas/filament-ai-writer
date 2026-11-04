@@ -26,7 +26,7 @@ class NavigationPanelProvider extends PanelProvider
 
     return $panel->id('nav')->path('nav')->authGuard('workbench')->login()
       ->plugin($plugin)
-      ->discoverClusters(in: __DIR__, for: __NAMESPACE__)
+      ->discoverClusters(in: __DIR__ . "/Clusters", for: __NAMESPACE__ . "\\Clusters")
       ->middleware([EncryptCookies::class, AddQueuedCookiesToResponse::class, StartSession::class, ShareErrorsFromSession::class,
         VerifyCsrfToken::class, SubstituteBindings::class, DisableBladeIconComponents::class, DispatchServingFilamentEvent::class])
       ->authMiddleware([Authenticate::class]);

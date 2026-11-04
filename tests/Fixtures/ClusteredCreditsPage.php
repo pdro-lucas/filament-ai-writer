@@ -6,5 +6,5 @@ use PdroLucas\FilamentAiWriter\Pages\MyAiCreditsPage;
 
 class ClusteredCreditsPage extends MyAiCreditsPage
 {
-  protected static ?string $cluster = NavigationCluster::class;
+  protected static ?string $cluster = Clusters\NavigationCluster::class;
 }

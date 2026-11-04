@@ -17,7 +17,7 @@ use PdroLucas\FilamentAiWriter\Pages\UsageStatisticsPage;
 use PdroLucas\FilamentAiWriter\Tests\Fixtures\AbstractStatisticsPage;
 use PdroLucas\FilamentAiWriter\Tests\Fixtures\ClusteredCreditsPage;
 use PdroLucas\FilamentAiWriter\Tests\Fixtures\HostStatisticsPage;
-use PdroLucas\FilamentAiWriter\Tests\Fixtures\NavigationCluster;
+use PdroLucas\FilamentAiWriter\Tests\Fixtures\Clusters\NavigationCluster;
 use PdroLucas\FilamentAiWriter\Tests\Fixtures\NavigationPanelProvider;
 use PdroLucas\FilamentAiWriter\Tests\Fixtures\AnyPanelUser;
 use Workbench\Database\Seeders\DatabaseSeeder;

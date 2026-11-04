@@ -22,6 +22,7 @@ use PdroLucas\FilamentAiWriter\Generation\Generation;
 use PdroLucas\FilamentAiWriter\Pages\AiControlsPage;
 use PdroLucas\FilamentAiWriter\Pages\MyAiCreditsPage;
 use PdroLucas\FilamentAiWriter\Pages\UsageStatisticsPage;
+use PdroLucas\FilamentAiWriter\Support\Reason;
 use PdroLucas\FilamentAiWriter\Usage\UsageStatistics;
 use ReflectionClass;
 
@@ -43,6 +44,8 @@ class AiWriterPlugin implements Plugin
   protected string|Closure|null $scope = null;
   protected ?Closure $actorSearch = null;
   protected ?Closure $actorResolver = null;
+
+  protected bool|Closure|null $requireReason = null;
 
   protected bool|Closure $usersTab = true;
   protected bool|Closure $creditsIndicator = true;
@@ -231,6 +234,32 @@ class AiWriterPlugin implements Plugin
   public function hasCreditsIndicator(): bool
   {
     return $this->evaluateCondition($this->creditsIndicator);
+  }
+
+  /**
+   * Whether administrative changes need a reason. Null (default): required for actions against one person (block/unblock,
+   * individual limit, extra credits, period reset) and for renewing everyone, optional for global settings and pausing AI.
+   * true requires it everywhere and false nowhere. A Closure may take Panel $panel and string $action (the audited action,
+   * e.g. 'block', 'availability') and return a bool, or null for the default of that action.
+   */
+  public function requireReason(bool|Closure|null $condition = true): static
+  {
+    $this->requireReason = $condition;
+    return $this;
+  }
+
+  /** The configured override: true, false, or null when each action keeps its default. */
+  public function getRequireReason(): ?bool
+  {
+    $value = $this->evaluate($this->requireReason, ['panel' => $this->panel], [Panel::class => $this->panel]);
+    return $value === null ? null : (bool) $value;
+  }
+
+  /** Whether the given audited action needs a reason now. Enforced by the services, not only by the interface. */
+  public function isReasonRequired(string $action): bool
+  {
+    $value = $this->evaluate($this->requireReason, ['panel' => $this->panel, 'action' => $action], [Panel::class => $this->panel]);
+    return $value === null ? in_array($action, Reason::REQUIRED_BY_DEFAULT, true) : (bool) $value;
   }
 
   /** The Users section; it also needs actorDirectoryUsing() and is unreachable without it. */

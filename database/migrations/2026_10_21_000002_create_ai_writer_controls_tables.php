@@ -34,7 +34,7 @@ return new class extends Migration
       $table->string('actor_id')->nullable();
       $table->json('before');
       $table->json('after');
-      $table->string('reason', 500);
+      $table->string('reason', 500)->nullable();
       $table->timestamp('created_at', 6);
       $table->index(['scope_key', 'id'], 'aiw_audit_scope_id');
     });

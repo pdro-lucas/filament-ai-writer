@@ -14,6 +14,7 @@ use PdroLucas\FilamentAiWriter\Controls\ActorIdentity;
 use PdroLucas\FilamentAiWriter\Schemas\AiCreditStatus;
 use PdroLucas\FilamentAiWriter\Support\ActorConfirmation;
 use PdroLucas\FilamentAiWriter\Support\ControlFields;
+use PdroLucas\FilamentAiWriter\Support\Reason;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 use Throwable;
 
@@ -21,6 +22,9 @@ class ManageAiUserAction extends Action
 {
   protected ?Closure $actorResolver = null;
   protected ?array $statusSnapshot = null;
+
+  /** The audited action each operation is recorded as; it decides whether a reason is required. */
+  private const AUDITED = ['block' => 'block', 'unblock' => 'block', 'limit' => 'quota_limit', 'restoreLimit' => 'quota_limit', 'extra' => 'quota_extra', 'resetPeriod' => 'quota_reset'];
 
   public static function getDefaultName(): ?string
   {
@@ -151,7 +155,8 @@ class ManageAiUserAction extends Action
         return $label . ': ' . ($actor->label !== '' ? $actor->label : $actor->id);
       } catch (ValidationException) { return $label . ': User unavailable'; }
     })->modalDescription($description)->modalSubmitActionLabel($label)
-      ->schema([...$fields, ControlFields::reasonField()])
+      ->modal(fn (): bool => in_array($operation, ['block', 'limit', 'extra'], true) || Reason::isRequired(self::AUDITED[$operation]))
+      ->schema([...$fields, ControlFields::reasonField(self::AUDITED[$operation])])
       ->mountUsing(function (Action $action, ?Schema $schema) use ($operation): void {
         try { [$context, $actor] = $this->target(); }
         catch (ValidationException $exception) { $this->unavailable($exception); }
@@ -167,12 +172,12 @@ class ManageAiUserAction extends Action
         $plugin = AiWriterPlugin::get();
         try {
           match ($operation) {
-            'block' => $plugin->controlsService()->setBlocked($context, $actor, true, $data['reason']),
-            'unblock' => $plugin->controlsService()->setBlocked($context, $actor, false, $data['reason']),
-            'limit' => $plugin->credits()->setLimit($context, $actor, ControlFields::parseInteger($data['limit'], 'limit'), $data['reason']),
-            'restoreLimit' => $plugin->credits()->setLimit($context, $actor, null, $data['reason']),
-            'extra' => $plugin->credits()->grant($context, $actor, ControlFields::parseInteger($data['amount'], 'amount', 1), $data['reason']),
-            'resetPeriod' => $plugin->credits()->reset($context, $actor, $data['reason']),
+            'block' => $plugin->controlsService()->setBlocked($context, $actor, true, $data['reason'] ?? null),
+            'unblock' => $plugin->controlsService()->setBlocked($context, $actor, false, $data['reason'] ?? null),
+            'limit' => $plugin->credits()->setLimit($context, $actor, ControlFields::parseInteger($data['limit'], 'limit'), $data['reason'] ?? null),
+            'restoreLimit' => $plugin->credits()->setLimit($context, $actor, null, $data['reason'] ?? null),
+            'extra' => $plugin->credits()->grant($context, $actor, ControlFields::parseInteger($data['amount'], 'amount', 1), $data['reason'] ?? null),
+            'resetPeriod' => $plugin->credits()->reset($context, $actor, $data['reason'] ?? null),
           };
           $this->statusSnapshot = null;
           $this->getLivewire()->dispatch('ai-writer-credits-changed');

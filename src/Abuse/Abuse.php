@@ -7,6 +7,7 @@ use Closure;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Validation\ValidationException;
 use PdroLucas\FilamentAiWriter\AiWriterPlugin;
+use PdroLucas\FilamentAiWriter\Support\Reason;
 use PdroLucas\FilamentAiWriter\Controls\ActorIdentity;
 use PdroLucas\FilamentAiWriter\Controls\ControlContext;
 use PdroLucas\FilamentAiWriter\Credits\Credits;
@@ -40,13 +41,10 @@ final class Abuse
   }
 
   /** Partial settings update; enabling requires explicit valid thresholds, never defaults. */
-  public function configure(ControlContext $context, array $settings, string $reason): void
+  public function configure(ControlContext $context, array $settings, ?string $reason = null): void
   {
     AiWriterPlugin::get()->controlsService()->authorize($context);
-    $reason = trim($reason);
-    if ($reason === '' || mb_strlen($reason) > 500 || !mb_check_encoding($reason, 'UTF-8') || preg_match('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/', $reason)) {
-      throw ValidationException::withMessages(['reason' => 'Enter a reason of at most 500 characters.']);
-    }
+    $reason = Reason::resolve('abuse_policy', $reason);
     if (array_diff(array_keys($settings), self::FIELDS)) {
       throw ValidationException::withMessages(['abuse' => 'Unknown protection setting.']);
     }

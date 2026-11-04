@@ -8,6 +8,7 @@ use Illuminate\Validation\ValidationException;
 use PdroLucas\FilamentAiWriter\AiWriterPlugin;
 use PdroLucas\FilamentAiWriter\Exceptions\GenerationFailure;
 use PdroLucas\FilamentAiWriter\Models\ControlAudit;
+use PdroLucas\FilamentAiWriter\Support\Reason;
 use Throwable;
 
 final class Controls
@@ -85,12 +86,12 @@ final class Controls
     }
   }
 
-  public function setEnabled(ControlContext $context, bool $enabled, string $reason): void
+  public function setEnabled(ControlContext $context, bool $enabled, ?string $reason = null): void
   {
     $this->change($context, 'availability', null, $enabled, $reason);
   }
 
-  public function setBlocked(ControlContext $context, ActorIdentity $actor, bool $blocked, string $reason): void
+  public function setBlocked(ControlContext $context, ActorIdentity $actor, bool $blocked, ?string $reason = null): void
   {
     $this->authorize($context);
     // Even a previously selected actor must still be manageable in this context.
@@ -101,13 +102,10 @@ final class Controls
     $this->change($context, 'block', $resolved, $blocked, $reason);
   }
 
-  private function change(ControlContext $context, string $action, ?ActorIdentity $actor, bool $value, string $reason): void
+  private function change(ControlContext $context, string $action, ?ActorIdentity $actor, bool $value, ?string $reason): void
   {
     $this->authorize($context);
-    $reason = trim($reason);
-    if ($reason === '' || mb_strlen($reason) > 500 || !mb_check_encoding($reason, 'UTF-8') || preg_match('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/', $reason)) {
-      throw ValidationException::withMessages(['reason' => 'Enter a reason of at most 500 characters.']);
-    }
+    $reason = Reason::resolve($action, $reason);
     app(\PdroLucas\FilamentAiWriter\Credits\Credits::class)->connection()->transaction(function () use ($context, $action, $actor, $value, $reason): void {
       // Unique insert arbitrates first writers; every change then locks the same scope row.
       DB::table('filament_ai_writer_policies')->insertOrIgnore(['scope_key' => $context->scopeKey(), 'scope' => $context->scope, 'enabled' => true]);

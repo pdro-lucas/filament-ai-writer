@@ -13,6 +13,7 @@ use Filament\Schemas\Components\Actions;
 use Filament\Schemas\Components\EmbeddedSchema;
 use PdroLucas\FilamentAiWriter\Actions\ManageAiUserAction;
 use PdroLucas\FilamentAiWriter\Support\ControlFields;
+use PdroLucas\FilamentAiWriter\Support\Reason;
 use PdroLucas\FilamentAiWriter\Controls\ActorIdentity;
 use PdroLucas\FilamentAiWriter\Credits\Credits;
 use Filament\Notifications\Notification;
@@ -140,11 +141,13 @@ class AiControlsPage extends Page implements HasTable
   {
     return Action::make($name)->label($enabled ? 'Enable AI' : 'Pause AI')->color($enabled ? 'primary' : 'danger')
       ->visible(fn (): bool => AiWriterPlugin::get()->controlsService()->enabled($this->context()) !== $enabled)
+      // One click by default; a dialog only appears when requireReason() asks for a reason here.
+      ->modal(fn (): bool => Reason::isRequired('availability'))
       ->modalHeading($enabled ? 'Enable AI' : 'Pause AI')->modalDescription('Applies to new generations. Already admitted generations can finish.')
-      ->schema([$this->reasonField()])
+      ->schema(fn (): array => Reason::isRequired('availability') ? [$this->reasonField('availability')] : [])
       ->action(function (array $data) use ($enabled): void {
         $context = $this->context();
-        $this->saveChange(fn () => AiWriterPlugin::get()->controlsService()->setEnabled($context, $enabled, $data['reason']));
+        $this->saveChange(fn () => AiWriterPlugin::get()->controlsService()->setEnabled($context, $enabled, $data['reason'] ?? null));
       });
   }
 
@@ -197,8 +200,8 @@ class AiControlsPage extends Page implements HasTable
     return Action::make('renew')->label('Renew all credits')->color('danger')
       ->modalHeading('Renew credits for all users')
       ->modalDescription('Start a new period for everyone in this scope. Unused credits do not carry over. In-flight generations settle against their original period.')
-      ->schema([$this->reasonField()])->action(function (array $data): void {
-        $this->saveChange(fn () => AiWriterPlugin::get()->credits()->renew($this->context(), $data['reason']));
+      ->modal()->schema([$this->reasonField('quota_renew')])->action(function (array $data): void {
+        $this->saveChange(fn () => AiWriterPlugin::get()->credits()->renew($this->context(), $data['reason'] ?? null));
       });
   }
 
@@ -318,15 +321,18 @@ class AiControlsPage extends Page implements HasTable
         'failure' => 'failure protection settings. Recent failures can immediately pause new generations. Successful generations do not clear recent failures.',
         default => 'settings.',
       } . $this->settingsDescription($arguments))
-      ->schema([$this->reasonField()])->action(function (array $data, array $arguments): void {
+      // Saving settings is one click unless requireReason() asks for a reason here.
+      ->modal(fn (array $arguments): bool => Reason::isRequired($this->settingsAction($arguments)))
+      ->schema(fn (array $arguments): array => Reason::isRequired($this->settingsAction($arguments)) ? [$this->reasonField($this->settingsAction($arguments))] : [])
+      ->action(function (array $data, array $arguments): void {
         $context = $this->context();
         $group = $arguments['group'] ?? '';
         $values = $this->settingValues($group, is_array($arguments['settings'] ?? null) ? $arguments['settings'] : []);
         $this->saveChange(function () use ($context, $group, $values, $data): void {
           if ($group === 'credit') {
-            AiWriterPlugin::get()->credits()->configure($context, $values['enabled'], $values['limit'], $values['renewal'], $data['reason']);
+            AiWriterPlugin::get()->credits()->configure($context, $values['enabled'], $values['limit'], $values['renewal'], $data['reason'] ?? null);
           } else {
-            AiWriterPlugin::get()->abuse()->configure($context, $values, $data['reason']);
+            AiWriterPlugin::get()->abuse()->configure($context, $values, $data['reason'] ?? null);
           }
           $this->fillSettings();
         });
@@ -356,9 +362,15 @@ class AiControlsPage extends Page implements HasTable
     return ControlFields::informationAction($name, $label, $details);
   }
 
-  protected function reasonField(): Textarea
+  protected function reasonField(string $action): Textarea
   {
-    return ControlFields::reasonField();
+    return ControlFields::reasonField($action);
+  }
+
+  /** The audited action behind a settings save: credit settings are the quota policy, the rest abuse protection. */
+  protected function settingsAction(array $arguments): string
+  {
+    return ($arguments['group'] ?? '') === 'credit' ? 'quota_policy' : 'abuse_policy';
   }
 
   protected function saveChange(\Closure $change): void
@@ -424,7 +436,7 @@ class AiControlsPage extends Page implements HasTable
         TextColumn::make('actor_id')->label('User')->placeholder('All users')->wrap()
           ->formatStateUsing(fn (ControlAudit $record): string => $this->auditIdentity($record->actor_type, $record->actor_id))
 ,
-        TextColumn::make('reason')->label('Reason')->wrap(),
+        TextColumn::make('reason')->label(__('Reason'))->placeholder(__('No reason given'))->wrap(),
       ])->emptyStateHeading('No changes recorded');
   }
 

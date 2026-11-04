@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use PdroLucas\FilamentAiWriter\AiWriterPlugin;
+use PdroLucas\FilamentAiWriter\Support\Reason;
 use PdroLucas\FilamentAiWriter\Controls\ActorIdentity;
 use PdroLucas\FilamentAiWriter\Controls\ControlContext;
 use PdroLucas\FilamentAiWriter\Data\GenerationContext;
@@ -274,7 +275,7 @@ final class Credits
     });
   }
 
-  public function configure(ControlContext $context, bool $enabled, mixed $limit, string $renewal, string $reason): void
+  public function configure(ControlContext $context, bool $enabled, mixed $limit, string $renewal, ?string $reason = null): void
   {
     $this->integer($limit);
     if (!in_array($renewal, ['manual', 'daily', 'weekly', 'monthly'], true)) {
@@ -300,7 +301,7 @@ final class Credits
     });
   }
 
-  public function setLimit(ControlContext $context, ActorIdentity $actor, mixed $limit, string $reason): void
+  public function setLimit(ControlContext $context, ActorIdentity $actor, mixed $limit, ?string $reason = null): void
   {
     if ($limit !== null) {
       $this->integer($limit);
@@ -311,7 +312,7 @@ final class Credits
     });
   }
 
-  public function grant(ControlContext $context, ActorIdentity $actor, mixed $amount, string $reason): void
+  public function grant(ControlContext $context, ActorIdentity $actor, mixed $amount, ?string $reason = null): void
   {
     $this->integer($amount, 1);
     $this->admin($context, $actor, 'quota_extra', $reason, function ($policy) use ($actor, $amount): void {
@@ -324,7 +325,7 @@ final class Credits
     });
   }
 
-  public function reset(ControlContext $context, ActorIdentity $actor, string $reason): void
+  public function reset(ControlContext $context, ActorIdentity $actor, ?string $reason = null): void
   {
     $this->admin($context, $actor, 'quota_reset', $reason, function ($policy) use ($actor): void {
       $this->validPolicy($policy);
@@ -333,7 +334,7 @@ final class Credits
     });
   }
 
-  public function renew(ControlContext $context, string $reason): void
+  public function renew(ControlContext $context, ?string $reason = null): void
   {
     $this->admin($context, null, 'quota_renew', $reason, function ($policy): void {
       $this->validPolicy($policy);
@@ -371,16 +372,13 @@ final class Credits
     }
   }
 
-  private function admin(ControlContext $context, ?ActorIdentity $actor, string $action, string $reason, Closure $change): void
+  private function admin(ControlContext $context, ?ActorIdentity $actor, string $action, ?string $reason, Closure $change): void
   {
     AiWriterPlugin::get()->controlsService()->authorize($context);
     if ($actor !== null) {
       $this->authorizeActor($context, $actor);
     }
-    $reason = trim($reason);
-    if ($reason === '' || mb_strlen($reason) > 500 || !mb_check_encoding($reason, 'UTF-8') || preg_match('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/', $reason)) {
-      throw ValidationException::withMessages(['reason' => 'Enter a reason of at most 500 characters.']);
-    }
+    $reason = Reason::resolve($action, $reason);
     $this->connection()->transaction(function () use ($context, $actor, $action, $reason, $change): void {
       AiWriterPlugin::get()->controlsService()->authorize($context);
       if ($actor !== null) {
