@@ -108,9 +108,13 @@ final class Controls
     $this->authorize($context);
     $reason = Reason::resolve($action, $reason);
     app(\PdroLucas\FilamentAiWriter\Credits\Credits::class)->connection()->transaction(function () use ($context, $action, $actor, $value, $reason): void {
-      // Unique insert arbitrates first writers; every change then locks the same scope row.
-      DB::table('filament_ai_writer_policies')->insertOrIgnore(['scope_key' => $context->scopeKey(), 'scope' => $context->scope, 'enabled' => true]);
+      // Lock an existing row first (INSERT IGNORE over an existing key takes a shared lock that deadlocks on MySQL);
+      // the unique insert arbitrates first writers only when the row is missing.
       $policy = DB::table('filament_ai_writer_policies')->where('scope_key', $context->scopeKey())->lockForUpdate()->first();
+      if ($policy === null) {
+        DB::table('filament_ai_writer_policies')->insertOrIgnore(['scope_key' => $context->scopeKey(), 'scope' => $context->scope, 'enabled' => true]);
+        $policy = DB::table('filament_ai_writer_policies')->where('scope_key', $context->scopeKey())->lockForUpdate()->first();
+      }
       if ($policy === null || $policy->scope !== $context->scope) {
         throw new \RuntimeException('Control scope could not be locked.');
       }

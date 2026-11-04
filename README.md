@@ -616,7 +616,25 @@ Open `http://127.0.0.1:8000/demo` and sign in with `demo@example.test` / `passwo
 composer test
 ```
 
-Tests bootstrap with `WithWorkbench`, use a separate SQLite `:memory:` connection, and block unexpected HTTP calls. Tests must install their own `Http::fake()` responses; the demo response is not installed during unit tests. `tests/TestCase.php` is the shared base for subsequent coverage.
+Tests bootstrap with `WithWorkbench`, use a separate SQLite `:memory:` connection by default, and block unexpected HTTP calls. Tests must install their own `Http::fake()` responses; the demo response is not installed during unit tests. `tests/TestCase.php` is the shared base for subsequent coverage.
+
+### Running the suite on MySQL or PostgreSQL
+
+The whole suite also passes on MySQL 8.4 and PostgreSQL 16. Select the database with `DB_CONNECTION` (`mysql` or `pgsql`) and `DB_HOST`, `DB_PORT`, `DB_DATABASE`, `DB_USERNAME`, `DB_PASSWORD`. **The database is wiped by `migrate:fresh`: use a dedicated, empty one.** With Docker:
+
+```bash
+docker network create ai-writer-test
+docker run -d --name ai-writer-mysql --network ai-writer-test -e MYSQL_ROOT_PASSWORD=secret -e MYSQL_DATABASE=suite mysql:8.4
+docker run -d --name ai-writer-pg --network ai-writer-test -e POSTGRES_PASSWORD=secret -e POSTGRES_DB=suite postgres:16
+# Use any PHP 8.2+ image with pdo_mysql/pdo_pgsql, intl and zip; the repo is mounted at /app after `composer install`.
+docker run --rm --network ai-writer-test -v "$PWD":/app -w /app \
+  -e DB_CONNECTION=mysql -e DB_HOST=ai-writer-mysql -e DB_DATABASE=suite -e DB_USERNAME=root -e DB_PASSWORD=secret \
+  your-php-image vendor/bin/phpunit
+# PostgreSQL: -e DB_CONNECTION=pgsql -e DB_HOST=ai-writer-pg -e DB_DATABASE=suite -e DB_USERNAME=postgres -e DB_PASSWORD=secret
+docker rm -f -v ai-writer-mysql ai-writer-pg && docker network rm ai-writer-test
+```
+
+On a real database the suite also runs `tests/Concurrency/MultiProcessAdmissionTest`, which races separate PHP processes through admission (last credit, frequency and concurrency limits) behind a file barrier. It is skipped on SQLite, where row-lock deadlocks and double admission cannot be reproduced, so run it on MySQL after touching the admission locking in `Credits`, `Controls` or `Abuse`.
 
 To check the other supported major without changing the manifest:
 

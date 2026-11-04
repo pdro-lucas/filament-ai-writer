@@ -44,8 +44,13 @@ final class Credits
   /** Internal shared admission lock; caller must own a transaction. */
   public function lockScope(string $key, string $scope): object
   {
-    $this->table('policies')->insertOrIgnore(['scope_key' => $key, 'scope' => $scope, 'enabled' => true]);
+    // Lock an existing row first: on MySQL, INSERT IGNORE over an existing key takes a shared lock,
+    // and concurrent shared-to-exclusive upgrades deadlock. Insert only when the row is missing.
     $policy = $this->table('policies')->where('scope_key', $key)->lockForUpdate()->first();
+    if ($policy === null) {
+      $this->table('policies')->insertOrIgnore(['scope_key' => $key, 'scope' => $scope, 'enabled' => true]);
+      $policy = $this->table('policies')->where('scope_key', $key)->lockForUpdate()->first();
+    }
     if ($policy === null || $policy->scope !== $scope) {
       throw new GenerationFailure('storage');
     }
@@ -435,8 +440,14 @@ final class Credits
 
   private function actor(object $policy, ActorIdentity $actor): object
   {
-    $this->table('credit_actors')->insertOrIgnore(['scope_key' => $policy->scope_key, 'actor_key' => $actor->key(), 'actor_type' => $actor->type, 'actor_id' => $actor->id]);
-    return $this->table('credit_actors')->where('scope_key', $policy->scope_key)->where('actor_key', $actor->key())->lockForUpdate()->first();
+    $locked = fn () => $this->table('credit_actors')->where('scope_key', $policy->scope_key)->where('actor_key', $actor->key())->lockForUpdate()->first();
+    // Same lock-first order as lockScope(): never take a shared lock on an existing row before the exclusive one.
+    $row = $locked();
+    if ($row === null) {
+      $this->table('credit_actors')->insertOrIgnore(['scope_key' => $policy->scope_key, 'actor_key' => $actor->key(), 'actor_type' => $actor->type, 'actor_id' => $actor->id]);
+      $row = $locked();
+    }
+    return $row;
   }
 
   private function currentBalance(object $policy, ActorIdentity $actor): object
