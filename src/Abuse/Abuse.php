@@ -32,9 +32,9 @@ final class Abuse
 
   public function policy(ControlContext $context): array
   {
-    AiWriterPlugin::get()->controls()->authorize($context);
+    AiWriterPlugin::get()->controlsService()->authorize($context);
     return $this->locked($context, function ($policy) use ($context): array {
-      AiWriterPlugin::get()->controls()->authorize($context);
+      AiWriterPlugin::get()->controlsService()->authorize($context);
       return $this->settings($policy);
     });
   }
@@ -42,7 +42,7 @@ final class Abuse
   /** Partial settings update; enabling requires explicit valid thresholds, never defaults. */
   public function configure(ControlContext $context, array $settings, string $reason): void
   {
-    AiWriterPlugin::get()->controls()->authorize($context);
+    AiWriterPlugin::get()->controlsService()->authorize($context);
     $reason = trim($reason);
     if ($reason === '' || mb_strlen($reason) > 500 || !mb_check_encoding($reason, 'UTF-8') || preg_match('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/', $reason)) {
       throw ValidationException::withMessages(['reason' => 'Enter a reason of at most 500 characters.']);
@@ -51,7 +51,7 @@ final class Abuse
       throw ValidationException::withMessages(['abuse' => 'Unknown protection setting.']);
     }
     $this->locked($context, function ($policy) use ($context, $settings, $reason): void {
-      AiWriterPlugin::get()->controls()->authorize($context);
+      AiWriterPlugin::get()->controlsService()->authorize($context);
       $before = $this->settings($policy);
       $after = array_replace($before, $settings);
       $this->validate($after);
@@ -85,7 +85,7 @@ final class Abuse
   {
     $authorize = function () use ($context, $actor): void {
       $plugin = AiWriterPlugin::get();
-      $plugin->controls()->authorize($context);
+      $plugin->controlsService()->authorize($context);
       if ($plugin->resolveActor($actor->token(), $context) === null) {
         throw ValidationException::withMessages(['actor' => 'Select an available user.']);
       }

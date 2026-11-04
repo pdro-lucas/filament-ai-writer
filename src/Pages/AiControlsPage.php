@@ -60,7 +60,7 @@ class AiControlsPage extends Page implements HasTable
   public static function canAccess(): bool
   {
     $plugin = AiWriterPlugin::get();
-    return $plugin->hasControlsSurface() && $plugin->canManage();
+    return $plugin->isControlsEnabled() && $plugin->canManage();
   }
 
   public function mount(): void
@@ -97,12 +97,12 @@ class AiControlsPage extends Page implements HasTable
   protected function availabilityAction(string $name, bool $enabled): Action
   {
     return Action::make($name)->label($enabled ? 'Enable AI' : 'Pause AI')->color($enabled ? 'primary' : 'danger')
-      ->visible(fn (): bool => AiWriterPlugin::get()->controls()->enabled($this->context()) !== $enabled)
+      ->visible(fn (): bool => AiWriterPlugin::get()->controlsService()->enabled($this->context()) !== $enabled)
       ->modalHeading($enabled ? 'Enable AI' : 'Pause AI')->modalDescription('Applies to new generations. Already admitted generations can finish.')
       ->schema([$this->reasonField()])
       ->action(function (array $data) use ($enabled): void {
         $context = $this->context();
-        $this->saveChange(fn () => AiWriterPlugin::get()->controls()->setEnabled($context, $enabled, $data['reason']));
+        $this->saveChange(fn () => AiWriterPlugin::get()->controlsService()->setEnabled($context, $enabled, $data['reason']));
       });
   }
 
@@ -338,7 +338,7 @@ class AiControlsPage extends Page implements HasTable
         ->emptyStateDescription(fn (): string => !AiWriterPlugin::get()->hasActorDirectory() ? 'Contact your application administrator to connect the directory. Settings and Activity remain available.' : ($this->directoryError ? 'Try searching again or contact your application administrator.' : 'Try another name or identifier recognized by your application.'));
     }
     return $table
-      ->query(fn (): Builder => AiWriterPlugin::get()->controls()->audit($this->context()))
+      ->query(fn (): Builder => AiWriterPlugin::get()->controlsService()->audit($this->context()))
       ->heading('Activity')->defaultSort('id', 'desc')->paginated([10, 25, 50])->defaultPaginationPageOption(10)
       ->columns([
         TextColumn::make('created_at')->label('Date / time')->tooltip('Times shown in ' . config('app.timezone'))->dateTime('M j, Y H:i:s', timezone: config('app.timezone')),
@@ -398,7 +398,7 @@ class AiControlsPage extends Page implements HasTable
   {
     $context = $this->context();
     $plugin = AiWriterPlugin::get();
-    $enabled = $plugin->controls()->enabled($context);
+    $enabled = $plugin->controlsService()->enabled($context);
     $policy = $plugin->credits()->policy($context);
     $renewal = $policy['renews_at'] === null ? 'Manual renewal' : \Carbon\CarbonImmutable::parse($policy['renews_at'], 'UTC')->setTimezone(config('app.timezone'))->format('M j, Y · H:i T');
     return $schema->components([

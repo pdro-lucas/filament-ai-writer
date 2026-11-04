@@ -19,7 +19,7 @@ class MyAiCreditsPage extends Page
   public static function canAccess(): bool
   {
     $plugin = AiWriterPlugin::get();
-    return $plugin->hasControlsSurface() && $plugin->canUseAi();
+    return $plugin->isControlsEnabled() && $plugin->canUseAi();
   }
 
   public function mount(): void
@@ -48,7 +48,7 @@ class MyAiCreditsPage extends Page
     // Recovery precedes balance so expired reservations are reflected here.
     $abuse = $plugin->abuse()->ownStatus($context);
     $balance = $plugin->credits()->ownBalance($context);
-    $status = $plugin->controls()->ownStatus($context);
+    $status = $plugin->controlsService()->ownStatus($context);
     return ['balance' => $balance, 'abuse' => $abuse, 'enabled' => $status['enabled'], 'blocked' => $status['blocked']];
   }
 }

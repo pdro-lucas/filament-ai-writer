@@ -100,10 +100,15 @@ A registered plugin with no modules behaves like the standalone action: no pages
 
 ```php
 AiWriterPlugin::make()
-    ->usageTracking(); // or ->usageTracking(fn (Panel $panel): bool => ...)
+    ->usageTracking()  // or ->usageTracking(fn (Panel $panel): bool => ...)
+    ->controls();      // requires usageTracking()
 ```
 
-`usageTracking()` records each generation in the metadata-only usage ledger, deduplicates and fences operations, and registers the **AI Writer usage** statistics page (still gated by `authorizeViewStatisticsUsing()`). It requires all four package migrations (`000001`–`000004`): operations live in the credits migration, and until controls get their own switch, credits, abuse protection and the Controls and My AI credits pages are enabled together with usage tracking. The closure receives the panel and is evaluated in two stages: once when the panel registers, which decides which pages, routes and render hooks exist; and again on every request, so turning it off also denies already mounted pages, hides the credits indicator and sends generation through the standalone path. With the module off, `ai-writer:prune-usage` and `ai-writer:recover-operations` succeed without changes when the tables are not installed.
+`usageTracking()` records each generation in the metadata-only usage ledger, deduplicates operations, gives each one an execution deadline that `ai-writer:recover-operations` can close, and registers the **AI Writer usage** statistics page (still gated by `authorizeViewStatisticsUsing()`). It does not read or reserve credits, blocks or abuse settings.
+
+`controls()` adds admission under one scope lock: AI availability, actor blocks, credits and abuse protection, plus the **AI Writer controls** and **My AI credits** pages and the credits indicator. It requires `usageTracking()`; enabling it alone throws a configuration error when the panel registers. Both modules use the same four package migrations (`000001`–`000004`): they build on each other and are published together.
+
+Each closure receives the panel and is evaluated in two stages: once when the panel registers, which decides which pages, routes and render hooks exist; and again on every request, so turning a module off also denies already mounted pages, hides the credits indicator and changes how new generations run. Turning `controls()` off never deletes stored settings, balances or audit entries; turning it back on resumes them. Operations admitted while controls were on keep their own accounting: delivery consumes, and failure or recovery releases, the reservation they made, even if controls are off by then. Generations admitted while controls are off are not charged and do not count toward abuse limits later. With the modules off, `ai-writer:prune-usage` and `ai-writer:recover-operations` succeed without changes when the tables are not installed.
 
 ## Controls, credits and integration
 
@@ -143,7 +148,7 @@ The [integration guide](docs/integration.md) provides:
 
 ### Upgrading an existing installation
 
-Writer actions keep working without the plugin. Register it in each panel that needs permissions, and add `usageTracking()` where you need usage history, credits or controls. Service-provider discovery does not register a panel plugin. Remove temporary `authorize()` or `beforeGenerate()` callbacks that only duplicated plugin checks; retain application-specific restrictions. Actions outside a current Filament panel are unsupported.
+Writer actions keep working without the plugin. Register it in each panel that needs permissions, and add `usageTracking()` for usage history and `controls()` for credits and administration. Service-provider discovery does not register a panel plugin. Remove temporary `authorize()` or `beforeGenerate()` callbacks that only duplicated plugin checks; retain application-specific restrictions. Actions outside a current Filament panel are unsupported.
 
 With `usageTracking()` enabled, publish **new** migrations and run them before generating. The package never migrates automatically and requires no host user-table changes. Missing controls storage or a failing scope resolver refuses generation rather than bypassing stored policy.
 

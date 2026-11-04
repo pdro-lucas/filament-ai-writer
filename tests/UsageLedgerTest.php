@@ -102,9 +102,9 @@ class UsageLedgerTest extends TestCase
       $this->assertSame('pending', UsageAttempt::query()->sole()->status);
       $this->assertSame((string) $actor->getKey(), UsageAttempt::query()->sole()->actor_id);
       if ($change === 'disable') {
-        $plugin->controls()->setEnabled($context, false, 'Maintenance during generation');
+        $plugin->controlsService()->setEnabled($context, false, 'Maintenance during generation');
       } elseif ($change === 'block') {
-        $plugin->controls()->setBlocked($context, $context->actor, true, 'Hold during generation');
+        $plugin->controlsService()->setBlocked($context, $context->actor, true, 'Hold during generation');
       }
       $this->assertSame(0, DB::transactionLevel());
       Filament::setCurrentPanel(\Filament\Panel::make()->id('isolated')->authGuard('web'));
@@ -409,6 +409,68 @@ class UsageLedgerTest extends TestCase
   public static function providerFailures(): array
   {
     return ['refusal' => ['refused', 'refused', 100, false], 'truncation' => ['truncated', 'incomplete', 100, false], 'empty' => ['empty', 'empty', 100, false], 'ambiguous timeout' => ['timeout', 'connection', null, true]];
+  }
+
+  public function test_operations_admitted_with_controls_settle_their_credits_after_controls_turn_off(): void
+  {
+    $this->login();
+    $plugin = AiWriterPlugin::get();
+    $plugin->authorizeManageUsing(fn () => true);
+    $context = $plugin->controlContext();
+    $plugin->credits()->configure($context, true, 2, 'manual', 'Start');
+    config(['filament-ai-writer.timeout' => 60, 'filament-ai-writer.recovery.margin_seconds' => 10]);
+    $previous = CarbonImmutable::getTestNow();
+    CarbonImmutable::setTestNow('2026-10-21 12:00:00 UTC');
+    try {
+      // Delivered after the switch: the stored operation still consumes its own reservation.
+      Http::fake(function () use ($plugin) {
+        $plugin->controls(false);
+        return Http::response($this->response());
+      });
+      $plugin->generation()->run('prompt', 'input', fn () => null, fn () => null, 'content');
+      $plugin->controls();
+      $balance = $plugin->credits()->ownBalance($context);
+      $this->assertSame([1, 0, 1], [$balance['consumed'], $balance['reserved'], $balance['available']]);
+
+      // Expired after the switch: maintenance still releases the reservation.
+      Http::swap(new \Illuminate\Http\Client\Factory());
+      Http::fake(function () use ($plugin) {
+        $plugin->controls(false);
+        CarbonImmutable::setTestNow('2026-10-21 12:01:10 UTC');
+        $this->artisan('ai-writer:recover-operations')->expectsOutputToContain('Recovered 1')->assertSuccessful();
+        return Http::response($this->response());
+      });
+      try {
+        $plugin->generation()->run('prompt', 'input', fn () => $this->fail('Expired operation must not deliver'), fn () => null, 'content');
+        $this->fail('Expired operation must fail');
+      } catch (GenerationFailure $failure) {
+        $this->assertSame('expired', $failure->failureCode);
+      }
+      $plugin->controls();
+      $balance = $plugin->credits()->ownBalance($context);
+      $this->assertSame([1, 0, 1], [$balance['consumed'], $balance['reserved'], $balance['available']]);
+
+      // Admitted with controls off: no reservation, but the ledger operation is still fenced and recovered.
+      $plugin->controls(false);
+      CarbonImmutable::setTestNow('2026-10-21 13:00:00 UTC');
+      Http::swap(new \Illuminate\Http\Client\Factory());
+      Http::fake(function () {
+        CarbonImmutable::setTestNow('2026-10-21 13:01:10 UTC');
+        $this->artisan('ai-writer:recover-operations')->expectsOutputToContain('Recovered 1')->assertSuccessful();
+        return Http::response($this->response());
+      });
+      try {
+        $plugin->generation()->run('prompt', 'input', fn () => $this->fail('Expired operation must not deliver'), fn () => null, 'content');
+        $this->fail('Expired ledger-only operation must fail');
+      } catch (GenerationFailure $failure) {
+        $this->assertSame('expired', $failure->failureCode);
+      }
+      $this->assertSame('expired', UsageAttempt::query()->latest('id')->first()->failure_code);
+      $plugin->controls();
+      $this->assertSame([1, 0, 1], array_values(array_intersect_key($plugin->credits()->ownBalance($context), array_flip(['consumed', 'reserved', 'available']))));
+    } finally {
+      CarbonImmutable::setTestNow($previous);
+    }
   }
 
   private function response(): array

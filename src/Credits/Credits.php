@@ -51,22 +51,22 @@ final class Credits
   }
 
   /** Internal ledger seam: admission and begin share this durable transaction. */
-  public function start(GenerationContext $generation, ?ControlContext $context, Closure $begin): void
+  public function start(GenerationContext $generation, ?ControlContext $context, Closure $begin, bool $fenced = false): void
   {
     try {
       if ($this->connection()->transactionLevel() !== 0) {
         throw new GenerationFailure('transaction');
       }
-      $refusal = $this->connection()->transaction(function () use ($generation, $context, $begin): ?string {
+      $refusal = $this->connection()->transaction(function () use ($generation, $context, $begin, $fenced): ?string {
         $balance = null;
-        $deadline = null;
+        $deadline = $context === null && $fenced ? $this->deadline() : null;
         if ($context !== null) {
           if ($context->panelId !== $generation->panelId || $context->actor->type !== $generation->actorType || $context->actor->id !== $generation->actorId) {
             throw new GenerationFailure('controls');
           }
           $policy = $this->lockScope($context->scopeKey(), $context->scope);
           $decisionAt = CarbonImmutable::now('UTC');
-          AiWriterPlugin::get()->controls()->assertAdmission($context);
+          AiWriterPlugin::get()->controlsService()->assertAdmission($context);
           if ($this->table('operations')->where('operation_id', $generation->operationId)->exists()) {
             throw new GenerationFailure('duplicate');
           }
@@ -259,10 +259,10 @@ final class Credits
 
   public function policy(ControlContext $context): array
   {
-    AiWriterPlugin::get()->controls()->authorize($context);
+    AiWriterPlugin::get()->controlsService()->authorize($context);
     return $this->connection()->transaction(function () use ($context): array {
       $policy = $this->lockScope($context->scopeKey(), $context->scope);
-      AiWriterPlugin::get()->controls()->authorize($context);
+      AiWriterPlugin::get()->controlsService()->authorize($context);
       $period = $policy->default_limit === null ? null : $this->period($policy);
       return $this->policySnapshot($policy) + ['renews_at' => $period?->ends_at];
     });
@@ -359,7 +359,7 @@ final class Credits
 
   private function authorizeActor(ControlContext $context, ActorIdentity $actor): void
   {
-    AiWriterPlugin::get()->controls()->authorize($context);
+    AiWriterPlugin::get()->controlsService()->authorize($context);
     if (AiWriterPlugin::get()->resolveActor($actor->token(), $context) === null) {
       throw ValidationException::withMessages(['actor' => 'Select an available user.']);
     }
@@ -367,7 +367,7 @@ final class Credits
 
   private function admin(ControlContext $context, ?ActorIdentity $actor, string $action, string $reason, Closure $change): void
   {
-    AiWriterPlugin::get()->controls()->authorize($context);
+    AiWriterPlugin::get()->controlsService()->authorize($context);
     if ($actor !== null) {
       $this->authorizeActor($context, $actor);
     }
@@ -376,7 +376,7 @@ final class Credits
       throw ValidationException::withMessages(['reason' => 'Enter a reason of at most 500 characters.']);
     }
     $this->connection()->transaction(function () use ($context, $actor, $action, $reason, $change): void {
-      AiWriterPlugin::get()->controls()->authorize($context);
+      AiWriterPlugin::get()->controlsService()->authorize($context);
       if ($actor !== null) {
         $this->authorizeActor($context, $actor);
       }

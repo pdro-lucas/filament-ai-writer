@@ -14,8 +14,11 @@ use Throwable;
 
 class UsageRecorder
 {
-  /** Direct ledger callers get durable deduplication, but do not admit generation or reserve quota. */
-  public function begin(GenerationContext $context, ?\PdroLucas\FilamentAiWriter\Controls\ControlContext $admission = null): void
+  /**
+   * Direct ledger callers get durable deduplication, but do not admit generation or reserve quota.
+   * A fenced operation without admission still gets an execution deadline, so recovery can close it.
+   */
+  public function begin(GenerationContext $context, ?\PdroLucas\FilamentAiWriter\Controls\ControlContext $admission = null, bool $fenced = false): void
   {
     $this->credits()->start($context, $admission, function () use ($context): void {
       $this->query()->insert([
@@ -25,7 +28,7 @@ class UsageRecorder
         'started_at' => $context->startedAt, 'status' => 'pending',
         'provider' => $context->configuredProvider, 'requested_model' => $context->requestedModel,
       ]);
-    });
+    }, $fenced);
   }
 
   /** Managed generations check the durable deadline again before contacting a provider. */

@@ -18,7 +18,7 @@ final class ActorConfirmation
 {
   public static function seal(string $purpose, string $component, ControlContext $context, ActorIdentity $actor): string
   {
-    AiWriterPlugin::get()->controls()->authorize($context);
+    AiWriterPlugin::get()->controlsService()->authorize($context);
     return Crypt::encryptString(json_encode([
       'version' => 1, 'purpose' => $purpose, 'component' => $component,
       'context' => $context->snapshot(), 'actor' => $actor->token(),
@@ -30,7 +30,7 @@ final class ActorConfirmation
   {
     $plugin = AiWriterPlugin::get();
     $context = $plugin->controlContext();
-    $plugin->controls()->authorize($context);
+    $plugin->controlsService()->authorize($context);
     abort_unless(is_string($envelope) && strlen($envelope) <= 10000, 403);
     try {
       $payload = json_decode(Crypt::decryptString($envelope), true, 16, JSON_THROW_ON_ERROR);
@@ -46,7 +46,7 @@ final class ActorConfirmation
   public static function resolve(ControlContext $context, Closure $identity): ActorIdentity
   {
     $plugin = AiWriterPlugin::get();
-    $plugin->controls()->authorize($context);
+    $plugin->controlsService()->authorize($context);
     try {
       $actor = $identity();
       if (!$actor instanceof ActorIdentity) {

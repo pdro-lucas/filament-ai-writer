@@ -20,6 +20,8 @@ class AiWriterPlugin implements Plugin
 
   protected bool|Closure $usageTracking = false;
 
+  protected bool|Closure $controls = false;
+
   protected ?Closure $useAiAuthorization = null;
   protected ?Closure $viewStatisticsAuthorization = null;
   protected ?Closure $manageAuthorization = null;
@@ -38,7 +40,7 @@ class AiWriterPlugin implements Plugin
     return app(\PdroLucas\FilamentAiWriter\Credits\Credits::class);
   }
 
-  public function controls(): \PdroLucas\FilamentAiWriter\Controls\Controls
+  public function controlsService(): \PdroLucas\FilamentAiWriter\Controls\Controls
   {
     return app(\PdroLucas\FilamentAiWriter\Controls\Controls::class);
   }
@@ -81,7 +83,7 @@ class AiWriterPlugin implements Plugin
 
   public function searchActors(string $search, \PdroLucas\FilamentAiWriter\Controls\ControlContext $context): array
   {
-    $this->controls()->authorize($context);
+    $this->controlsService()->authorize($context);
     if (!$this->hasActorDirectory()) {
       return [];
     }
@@ -108,7 +110,7 @@ class AiWriterPlugin implements Plugin
 
   public function resolveActor(string $token, \PdroLucas\FilamentAiWriter\Controls\ControlContext $context): ?\PdroLucas\FilamentAiWriter\Controls\ActorIdentity
   {
-    $this->controls()->authorize($context);
+    $this->controlsService()->authorize($context);
     if (!$this->hasActorDirectory()) {
       return null;
     }
@@ -225,17 +227,21 @@ class AiWriterPlugin implements Plugin
     }
 
     $this->panel = $panel;
-    if (!$this->isUsageTrackingEnabled()) {
+    $usageTracking = $this->isUsageTrackingEnabled();
+    if ($this->evaluateControls() && !$usageTracking) {
+      throw new LogicException('AiWriterPlugin::controls() requires ->usageTracking() on the same panel: credits and abuse protection are recorded on the usage ledger\'s operations.');
+    }
+    if (!$usageTracking) {
       // Core only: no pages, routes or render hooks, and no package table is read.
       return;
     }
     $panel->pages([UsageStatisticsPage::class]);
-    if (!$this->hasControlsSurface()) {
+    if (!$this->isControlsEnabled()) {
       return;
     }
     $panel->pages([$this->controlsPage, $this->creditsPage]);
     $panel->renderHook(\Filament\View\PanelsRenderHook::USER_MENU_BEFORE, function () use ($panel) {
-      if (Filament::getCurrentPanel() !== $panel || !$this->hasControlsSurface() || !$this->hasCreditsInTopbar()) { return ''; }
+      if (Filament::getCurrentPanel() !== $panel || !$this->isControlsEnabled() || !$this->hasCreditsInTopbar()) { return ''; }
       try { if (!$this->canUseAi()) { return ''; } }
       catch (\Throwable) { return ''; }
       return view('filament-ai-writer::credits-indicator-hook', ['panelId' => $panel->getId()]);
@@ -257,12 +263,23 @@ class AiWriterPlugin implements Plugin
   }
 
   /**
-   * @internal Temporary: credits, abuse protection and the Controls surfaces share the operation lifecycle with the ledger,
-   * so they follow usageTracking until they get their own module switch. Checked at registration and on every request.
+   * Credits, abuse protection, the Controls and My credits pages and the credits indicator. Requires usageTracking().
+   * Evaluated at registration (pages, routes, render hook) and on every request (access, admission, indicator).
    */
-  public function hasControlsSurface(): bool
+  public function controls(bool|Closure $condition = true): static
   {
-    return $this->isUsageTrackingEnabled();
+    $this->controls = $condition;
+    return $this;
+  }
+
+  public function isControlsEnabled(): bool
+  {
+    return $this->isUsageTrackingEnabled() && $this->evaluateControls();
+  }
+
+  private function evaluateControls(): bool
+  {
+    return (bool) $this->evaluate($this->controls, ['panel' => $this->panel], [Panel::class => $this->panel]);
   }
 
   /** @param Closure(\Illuminate\Contracts\Auth\Authenticatable, Panel): bool $callback */

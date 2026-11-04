@@ -125,6 +125,52 @@ class WriterDemoTest extends TestCase
     AiWriterPlugin::get()->generation()->run('prompt', 'input', fn () => $this->fail('Denied use must not deliver'), fn () => null, 'content');
   }
 
+  #[DefineEnvironment('withoutControls')]
+  public function test_usage_tracking_without_controls_records_the_ledger_without_admission_or_debit(): void
+  {
+    $this->signIn();
+    $plugin = AiWriterPlugin::get();
+    $plugin->authorizeManageUsing(fn () => true);
+    $context = $plugin->controlContext();
+    // Stored controls that would refuse this generation if admission ran.
+    $plugin->credits()->configure($context, true, 0, 'manual', 'No credits');
+    $queries = [];
+    DB::listen(function ($query) use (&$queries): void {
+      $queries[] = $query->sql;
+    });
+    Http::fake(['https://api.openai.com/v1/chat/completions' => Http::response([
+      'choices' => [['message' => ['content' => 'Tracked result.'], 'finish_reason' => 'stop']],
+    ])]);
+
+    $this->get('/demo/ai-writer-controls')->assertNotFound();
+    $this->get('/demo/my-ai-credits')->assertNotFound();
+    $this->get('/demo/ai-writer-usage')->assertOk();
+    Livewire::test(WriterDemo::class)
+      ->callAction(TestAction::make('ai_writer')->schemaComponent('content', 'form'))
+      ->assertSet('data.content', 'Tracked result.');
+
+    $controlsTables = '/filament_ai_writer_(policies|actor_blocks|control_audit|credit_)/';
+    $this->assertSame([], array_values(array_filter($queries, fn (string $sql): bool => preg_match($controlsTables, $sql) === 1)));
+    $this->assertSame('delivered', \PdroLucas\FilamentAiWriter\Models\UsageAttempt::query()->sole()->status);
+    $operation = DB::table('filament_ai_writer_operations')->sole();
+    $this->assertSame(['delivered', null, null], [$operation->status, $operation->scope_key, $operation->balance_id]);
+    $this->assertNotNull($operation->deadline_at, 'Ledger-only operations stay recoverable.');
+
+    // Turning controls back on resumes the stored state; nothing was charged or deleted.
+    $plugin->controls();
+    $balance = $plugin->credits()->ownBalance($context);
+    $this->assertSame([true, 0, 0, 0], [$balance['enabled'], $balance['limit'], $balance['consumed'], $balance['reserved']]);
+    Livewire::test(WriterDemo::class)
+      ->callAction(TestAction::make('ai_writer')->schemaComponent('content', 'form'))
+      ->assertNotified('AI generation was not delivered');
+    Http::assertSentCount(1);
+  }
+
+  protected function withoutControls($app): void
+  {
+    $app['config']->set('workbench.controls', false);
+  }
+
   protected function withoutUsageTracking($app): void
   {
     $app['config']->set('workbench.usage_tracking', false);
@@ -157,10 +203,10 @@ class WriterDemoTest extends TestCase
         } elseif ($source === 'action') {
           $allowAction = false;
         } elseif ($source === 'disabled') {
-          AiWriterPlugin::get()->controls()->setEnabled(AiWriterPlugin::get()->controlContext(), false, 'Maintenance');
+          AiWriterPlugin::get()->controlsService()->setEnabled(AiWriterPlugin::get()->controlContext(), false, 'Maintenance');
         } else {
           $context = AiWriterPlugin::get()->controlContext();
-          AiWriterPlugin::get()->controls()->setBlocked($context, $context->actor, true, 'Hold');
+          AiWriterPlugin::get()->controlsService()->setBlocked($context, $context->actor, true, 'Hold');
         }
 
         $page->setActionData(['ai_input' => 'Write an introduction to Filament plugins.'])

@@ -45,7 +45,7 @@ class ManageAiUserAction extends Action
       ->mountUsing(function (?Schema $schema): void {
         $plugin = AiWriterPlugin::get();
         $context = $plugin->controlContext();
-        $plugin->controls()->authorize($context);
+        $plugin->controlsService()->authorize($context);
         try { $actor = ActorConfirmation::resolve($context, fn () => $this->actorResolver === null ? null : $this->evaluate($this->actorResolver)); }
         catch (ValidationException $exception) { $this->unavailable($exception); }
         $this->statusSnapshot = null;
@@ -99,7 +99,7 @@ class ManageAiUserAction extends Action
       $abuse = $plugin->abuse()->status($context, $actor);
       $this->statusSnapshot = ['actor' => $actor, 'abuse' => $abuse,
         'balance' => $plugin->credits()->balance($context, $actor),
-        'availability' => ['enabled' => $plugin->controls()->enabled($context), 'blocked' => $plugin->controls()->blocked($context, $actor)]];
+        'availability' => ['enabled' => $plugin->controlsService()->enabled($context), 'blocked' => $plugin->controlsService()->blocked($context, $actor)]];
     }
     return $this->statusSnapshot;
   }
@@ -167,8 +167,8 @@ class ManageAiUserAction extends Action
         $plugin = AiWriterPlugin::get();
         try {
           match ($operation) {
-            'block' => $plugin->controls()->setBlocked($context, $actor, true, $data['reason']),
-            'unblock' => $plugin->controls()->setBlocked($context, $actor, false, $data['reason']),
+            'block' => $plugin->controlsService()->setBlocked($context, $actor, true, $data['reason']),
+            'unblock' => $plugin->controlsService()->setBlocked($context, $actor, false, $data['reason']),
             'limit' => $plugin->credits()->setLimit($context, $actor, ControlFields::parseInteger($data['limit'], 'limit'), $data['reason']),
             'restoreLimit' => $plugin->credits()->setLimit($context, $actor, null, $data['reason']),
             'extra' => $plugin->credits()->grant($context, $actor, ControlFields::parseInteger($data['amount'], 'amount', 1), $data['reason']),

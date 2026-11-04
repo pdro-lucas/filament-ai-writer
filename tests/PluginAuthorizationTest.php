@@ -64,14 +64,14 @@ class PluginAuthorizationTest extends TestCase
   {
     $controls = (new class extends \PdroLucas\FilamentAiWriter\Pages\AiControlsPage {})::class;
     $credits = (new class extends \PdroLucas\FilamentAiWriter\Pages\MyAiCreditsPage {})::class;
-    $plugin = AiWriterPlugin::make()->usageTracking()->controlsPage($controls)->creditsPage($credits);
+    $plugin = AiWriterPlugin::make()->usageTracking()->controls()->controlsPage($controls)->creditsPage($credits);
     $customPanel = Panel::make()->id('custom-pages')->plugin($plugin);
     $this->assertContains($controls, $customPanel->getPages());
     $this->assertContains($credits, $customPanel->getPages());
     $this->assertSame($credits, $plugin->getCreditsPage());
     $plugin->creditsInTopbar(false);
     $this->assertFalse($plugin->hasCreditsInTopbar());
-    $defaultPanel = Panel::make()->id('default-pages')->plugin(AiWriterPlugin::make()->usageTracking(fn (Panel $panel): bool => $panel->getId() === 'default-pages'));
+    $defaultPanel = Panel::make()->id('default-pages')->plugin(AiWriterPlugin::make()->usageTracking(fn (Panel $panel): bool => $panel->getId() === 'default-pages')->controls(fn (Panel $panel): bool => $panel->getId() === 'default-pages'));
     $this->assertContains(\PdroLucas\FilamentAiWriter\Pages\AiControlsPage::class, $defaultPanel->getPages());
     $this->assertContains(\PdroLucas\FilamentAiWriter\Pages\UsageStatisticsPage::class, $defaultPanel->getPages());
     $this->assertSame([], Panel::make()->id('core-only')->plugin(AiWriterPlugin::make())->getPages());
@@ -85,6 +85,21 @@ class PluginAuthorizationTest extends TestCase
         $this->addToAssertionCount(1);
       }
     }
+  }
+
+  public function test_controls_without_usage_tracking_is_a_registration_error(): void
+  {
+    try {
+      Panel::make()->id('controls-only')->plugin(AiWriterPlugin::make()->controls());
+      $this->fail('Controls must require usage tracking.');
+    } catch (\LogicException $exception) {
+      $this->assertStringContainsString('controls() requires ->usageTracking()', $exception->getMessage());
+    }
+    $plugin = AiWriterPlugin::make()->usageTracking()->controls();
+    Panel::make()->id('both-modules')->plugin($plugin);
+    // A later per-request change cannot leave controls running without the ledger.
+    $plugin->usageTracking(false);
+    $this->assertFalse($plugin->isControlsEnabled());
   }
 
   protected function setUp(): void

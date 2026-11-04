@@ -27,11 +27,17 @@ class Generation
     if ($plugin === null || !$plugin->isUsageTrackingEnabled()) {
       return $this->runCore($systemPrompt, $userInput, $deliver, $restore);
     }
-    // Admission (availability, blocks, credits, abuse) follows usageTracking until controls get their own module.
-    $admission = $plugin->controls()->admit();
-    $context = new GenerationContext($operationId ?? (string) \Illuminate\Support\Str::uuid(), $admission->panelId,
-      $admission->actor->type, $admission->actor->id, $field, $actionName);
-    $this->recorder->begin($context, $admission);
+    if ($plugin->isControlsEnabled()) {
+      // Availability, blocks, credits and abuse protection are admitted under one scope lock.
+      $admission = $plugin->controlsService()->admit();
+      $context = new GenerationContext($operationId ?? (string) \Illuminate\Support\Str::uuid(), $admission->panelId,
+        $admission->actor->type, $admission->actor->id, $field, $actionName);
+      $this->recorder->begin($context, $admission);
+    } else {
+      // Ledger only: deduplicated and deadline-fenced, without reading or reserving controls state.
+      $context = GenerationContext::capture($field, $operationId, $actionName);
+      $this->recorder->begin($context, fenced: true);
+    }
     $result = null;
     $quote = null;
     try {
