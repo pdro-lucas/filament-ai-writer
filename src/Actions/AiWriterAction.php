@@ -38,6 +38,15 @@ class AiWriterAction extends Action
   /** @var callable|null */
   protected $beforeGenerateCallback = null;
 
+  /**
+   * Generation commits its own admission, delivery and settlement, and refuses to run inside an open
+   * transaction. A panel's databaseTransactions() would wrap this action in one, so it never opts in.
+   */
+  public function hasDatabaseTransactions(): bool
+  {
+    return false;
+  }
+
   /** @var callable|null */
   protected static $globalBeforeGenerateCallback = null;
 

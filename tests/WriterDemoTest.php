@@ -320,6 +320,29 @@ class WriterDemoTest extends TestCase
     Http::assertNothingSent();
   }
 
+  public function test_panel_wide_action_transactions_do_not_wrap_generation(): void
+  {
+    $this->signIn();
+    $plugin = AiWriterPlugin::get();
+    $plugin->authorizeManage(fn () => true);
+    $context = $plugin->controlContext();
+    $plugin->credits()->configure($context, true, 3, 'manual', 'Start quota');
+    Http::fake(['https://api.openai.com/v1/chat/completions' => Http::response([
+      'choices' => [['message' => ['content' => 'Generated inside a transactional panel.'], 'finish_reason' => 'stop']],
+    ])]);
+
+    // Panel::databaseTransactions() configures every action this way; admission must still commit outside it.
+    \Filament\Actions\Action::configureUsing(
+      fn (\Filament\Actions\Action $action) => $action->databaseTransaction(),
+      fn () => Livewire::test(WriterDemo::class)
+        ->callAction(TestAction::make('ai_writer')->schemaComponent('content', 'form'))
+        ->assertSet('data.content', 'Generated inside a transactional panel.'),
+    );
+
+    $this->assertSame(1, $plugin->credits()->ownBalance($context)['consumed']);
+    $this->assertSame(0, DB::transactionLevel());
+  }
+
   public function test_failing_generated_text_listener_keeps_the_single_charged_delivery(): void
   {
     $this->signIn();
