@@ -171,6 +171,17 @@ class AiControlsTest extends TestCase
     $plugin->authorizeManageUsing(fn () => true);
     $this->assertFalse($plugin->controls()->enabled($plugin->controlContext()));
     $this->assertSame(1, $plugin->controls()->audit($plugin->controlContext())->count());
+    // Switching the module off also closes an already mounted page, before any storage read.
+    $page = \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\AiControlsPage::class)->mountAction('enable')->setActionData(['reason' => 'After module off']);
+    $browsing = \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\AiControlsPage::class);
+    $plugin->usageTracking(false);
+    $this->assertSame([], $this->packageQueries(function () use ($page, $browsing): void {
+      $page->callMountedAction()->assertForbidden();
+      $browsing->call('showSection', 'activity')->assertForbidden();
+      \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\AiControlsPage::class)->assertForbidden();
+    }));
+    $plugin->usageTracking();
+    $this->assertFalse($plugin->controls()->enabled($plugin->controlContext()));
   }
 
   public function test_missing_directory_keeps_availability_and_audit_usable_but_cannot_accept_arbitrary_actors(): void
@@ -429,6 +440,14 @@ class AiControlsTest extends TestCase
     Filament::bootCurrentPanel();
     $hook = \Filament\Support\Facades\FilamentView::renderHook(\Filament\View\PanelsRenderHook::USER_MENU_BEFORE)->toHtml();
     $this->assertStringContainsString('data-ai-controls="credits-indicator"', $hook);
+    $indicator = \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Livewire\OwnCreditsIndicator::class)->assertSee('Unlimited');
+    $plugin->usageTracking(false);
+    $this->assertSame([], $this->packageQueries(function () use ($indicator): void {
+      $indicator->dispatch('ai-writer-credits-changed')->assertDontSee('Unlimited');
+      \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Livewire\OwnCreditsIndicator::class)->assertDontSee('Unlimited')->assertDontSee('Credits unavailable');
+      $this->assertStringNotContainsString('credits-indicator', \Filament\Support\Facades\FilamentView::renderHook(\Filament\View\PanelsRenderHook::USER_MENU_BEFORE)->toHtml());
+    }));
+    $plugin->usageTracking();
     $indicator = \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Livewire\OwnCreditsIndicator::class);
     $other = \Filament\Panel::make()->id('no-ai-plugin')->authGuard('workbench');
     Filament::setCurrentPanel($other);
@@ -521,8 +540,14 @@ class AiControlsTest extends TestCase
   public function test_own_credit_page_uses_only_current_actor_without_management_and_rechecks_context(): void
   {
     $this->login();
-    \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\MyAiCreditsPage::class)->assertSee('No credit limit configured')->assertDontSee('No credits available');
+    $mounted = \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\MyAiCreditsPage::class)->assertSee('No credit limit configured')->assertDontSee('No credits available');
     $plugin = AiWriterPlugin::get();
+    $plugin->usageTracking(false);
+    $this->assertSame([], $this->packageQueries(function () use ($mounted): void {
+      $mounted->call('$refresh')->assertForbidden();
+      \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\MyAiCreditsPage::class)->assertForbidden();
+    }));
+    $plugin->usageTracking();
     $context = $plugin->controlContext();
     $plugin->credits()->configure($context, true, 12, 'manual', 'Start');
     $plugin->controls()->setEnabled($context, false, 'Maintenance');
@@ -1074,6 +1099,24 @@ class AiControlsTest extends TestCase
     } catch (GenerationFailure $failure) {
       $this->assertSame($expectedFailure, $failure->failureCode);
     }
+  }
+
+  /** @return list<string> SQL touching package tables while the callback runs. */
+  private function packageQueries(\Closure $callback): array
+  {
+    $queries = [];
+    $listening = true;
+    \Illuminate\Support\Facades\DB::listen(function ($query) use (&$queries, &$listening): void {
+      if ($listening && str_contains($query->sql, 'filament_ai_writer')) {
+        $queries[] = $query->sql;
+      }
+    });
+    try {
+      $callback();
+    } finally {
+      $listening = false;
+    }
+    return $queries;
   }
 
   private function login(): void

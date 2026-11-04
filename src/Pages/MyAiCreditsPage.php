@@ -18,7 +18,8 @@ class MyAiCreditsPage extends Page
 
   public static function canAccess(): bool
   {
-    return AiWriterPlugin::get()->canUseAi();
+    $plugin = AiWriterPlugin::get();
+    return $plugin->hasControlsSurface() && $plugin->canUseAi();
   }
 
   public function mount(): void

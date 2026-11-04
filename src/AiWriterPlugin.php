@@ -235,7 +235,7 @@ class AiWriterPlugin implements Plugin
     }
     $panel->pages([$this->controlsPage, $this->creditsPage]);
     $panel->renderHook(\Filament\View\PanelsRenderHook::USER_MENU_BEFORE, function () use ($panel) {
-      if (Filament::getCurrentPanel() !== $panel || !$this->hasCreditsInTopbar()) { return ''; }
+      if (Filament::getCurrentPanel() !== $panel || !$this->hasControlsSurface() || !$this->hasCreditsInTopbar()) { return ''; }
       try { if (!$this->canUseAi()) { return ''; } }
       catch (\Throwable) { return ''; }
       return view('filament-ai-writer::credits-indicator-hook', ['panelId' => $panel->getId()]);
@@ -257,10 +257,10 @@ class AiWriterPlugin implements Plugin
   }
 
   /**
-   * Temporary: credits, abuse protection and the Controls surfaces share the operation lifecycle with the ledger,
-   * so they follow usageTracking until they get their own module switch.
+   * @internal Temporary: credits, abuse protection and the Controls surfaces share the operation lifecycle with the ledger,
+   * so they follow usageTracking until they get their own module switch. Checked at registration and on every request.
    */
-  private function hasControlsSurface(): bool
+  public function hasControlsSurface(): bool
   {
     return $this->isUsageTrackingEnabled();
   }

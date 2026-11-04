@@ -59,7 +59,8 @@ class AiControlsPage extends Page implements HasTable
 
   public static function canAccess(): bool
   {
-    return AiWriterPlugin::get()->canManage();
+    $plugin = AiWriterPlugin::get();
+    return $plugin->hasControlsSurface() && $plugin->canManage();
   }
 
   public function mount(): void
