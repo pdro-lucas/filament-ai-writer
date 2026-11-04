@@ -17,18 +17,26 @@ use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
 use Livewire\Attributes\Locked;
 use PdroLucas\FilamentAiWriter\AiWriterPlugin;
+use PdroLucas\FilamentAiWriter\Concerns\UsesPluginNavigation;
 use PdroLucas\FilamentAiWriter\Controls\ActorIdentity;
 use PdroLucas\FilamentAiWriter\Models\UsageAttempt;
 use PdroLucas\FilamentAiWriter\Usage\UsageStatistics;
 
 class UsageStatisticsPage extends Page implements HasTable
 {
+  use UsesPluginNavigation;
+
   use InteractsWithTable {
     getTableFilterState as protected getRawTableFilterState;
   }
 
   protected static ?string $title = 'AI Writer usage';
   protected static ?string $slug = 'ai-writer-usage';
+
+  protected static function pluginPage(): string
+  {
+    return 'statistics';
+  }
   protected string $view = 'filament-ai-writer::usage-statistics';
 
   #[Locked]

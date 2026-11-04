@@ -34,6 +34,7 @@ class DemoPanelProvider extends PanelProvider
         ->usageTracking(fn (): bool => (bool) config('workbench.usage_tracking', true))
         // controls() requires usageTracking(), so it follows that switch unless configured on its own.
         ->controls(fn (): bool => (bool) config('workbench.controls', config('workbench.usage_tracking', true)))
+        ->creditsPage()
         ->authorizeViewStatistics(fn () => true)
         ->authorizeManage(fn ($actor): bool => $actor instanceof User && $actor->email === 'demo@example.test')
         // This directory belongs to the demo host; the plugin never queries its User model.

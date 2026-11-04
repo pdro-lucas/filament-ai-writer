@@ -5,12 +5,20 @@ namespace PdroLucas\FilamentAiWriter\Pages;
 use Filament\Pages\Page;
 use Livewire\Attributes\Locked;
 use PdroLucas\FilamentAiWriter\AiWriterPlugin;
+use PdroLucas\FilamentAiWriter\Concerns\UsesPluginNavigation;
 use PdroLucas\FilamentAiWriter\Controls\ControlContext;
 
 class MyAiCreditsPage extends Page
 {
+  use UsesPluginNavigation;
+
   protected static ?string $title = 'My AI credits';
   protected static ?string $slug = 'my-ai-credits';
+
+  protected static function pluginPage(): string
+  {
+    return 'credits';
+  }
   protected string $view = 'filament-ai-writer::my-ai-credits';
 
   #[Locked]

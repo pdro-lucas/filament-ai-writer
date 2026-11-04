@@ -73,7 +73,7 @@ class OwnCreditsIndicator extends Component
         return view('filament-ai-writer::credits-indicator', $state);
       }
       $page = $plugin->getCreditsPage();
-      $state['url'] = $page::getUrl(panel: $panel->getId());
+      $state['url'] = $page === null ? null : $page::getUrl(panel: $panel->getId());
     } catch (AuthorizationException|HttpException) {
       $state = $hidden;
     } catch (Throwable) {

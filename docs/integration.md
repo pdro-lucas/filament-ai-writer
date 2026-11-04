@@ -171,47 +171,22 @@ The host owns those rules; the plugin rechecks the configured callbacks on the s
 
 The presentation setters are per instance and should be configured before registration. There are no plugin setters to unregister individual pages or run generation without its ledger/tables. Hiding navigation, Users or the topbar does not disable enforcement. Revoked use permission prevents new requests; it does not cancel an operation admitted earlier.
 
-For navigation-only changes, create these two concrete classes in their own files:
+Navigation, page replacement and the credits indicator are configured on the plugin, with no subclass needed:
 
 ```php
-namespace App\Filament\Pages;
-
-use PdroLucas\FilamentAiWriter\Pages\AiControlsPage;
-
-class TeamAiControls extends AiControlsPage
-{
-    protected static bool $shouldRegisterNavigation = false;
-}
-```
-
-```php
-namespace App\Filament\Pages;
-
-use PdroLucas\FilamentAiWriter\Pages\MyAiCreditsPage;
-
-class TeamAiCredits extends MyAiCreditsPage
-{
-    protected static bool $shouldRegisterNavigation = false;
-}
-```
-
-Select them on the plugin, without also registering the same classes through page discovery:
-
-```php
-use App\Filament\Pages\TeamAiControls;
-use App\Filament\Pages\TeamAiCredits;
 use PdroLucas\FilamentAiWriter\AiWriterPlugin;
 
 AiWriterPlugin::make()
     ->usageTracking()
     ->controls()
-    ->controlsPage(TeamAiControls::class)
-    ->creditsPage(TeamAiCredits::class)
+    ->navigationGroup('Administration')
+    ->controlsNavigationLabel('AI settings')
+    ->creditsPage()
     ->usersTab(false)
     ->creditsIndicator(false);
 ```
 
-These pages still have routes and their inherited access checks. The plugin exposes class setters for controls and personal credits, not a statistics-page setter. To deny statistics, use `authorizeViewStatistics()`; to change a panel's navigation composition, use the host's native Filament navigation configuration.
+`statisticsPage()`, `controlsPage()` and `creditsPage()` accept `true`, `false` (no page, no route), a concrete subclass of the built-in page, or a `Closure` returning one of them, resolved when the panel registers. Passing an abstract or unrelated class throws an `InvalidArgumentException`. When you pass a subclass, do not also register it through page discovery. Pages keep their routes and inherited access checks when only hidden from the menu (`controlsNavigation(false)`). My AI credits has no route until `creditsPage()` is called; the indicator popover covers the common case. See the README for the full per-page setter list.
 
 For a panel where no AI feature should be accessible, set all three authorization callbacks to `false`; optionally also turn off the topbar. To keep generation but remove administration and reporting, leave use permission configured and deny only management/statistics. Permission changes do not erase history or bypass migration requirements.
 
@@ -393,7 +368,7 @@ $components = AiCreditStatus::components($balance, $abuse, $availability);
 
 Resolve context on the server and revalidate it on every request; persistent host components should fence the mounted panel/guard/scope/actor as the built-in page does. These own APIs accept no target identity and validate the fresh snapshot. Never accept an actor/scope from the browser to build a context. `AiCreditStatus` is presentation only: it accepts the snapshots, does not authorize data and must not be fed arbitrary client balance/status arrays. For administrative target reads, use the reusable action or the authorized `balance()`/`status()` APIs with a scoped directory.
 
-The topbar Sparkles button links to the instance's configured credit page. It appears only with `controls()` on and quotas enabled, and shows numeric **available** credits, or **Credits unavailable** on storage failure. With quotas off it is not rendered: a page load reads only the scope's quota switch and no credit or abuse table. Retained off-quota balances are not advertised as spendable. A number is not a promise of admission: availability, blocks and protections still apply. Guests, denied users and changed contexts cannot see stale values.
+The topbar Sparkles button links to the instance's configured credit page (when `creditsPage()` is enabled). It appears only with `controls()` on and quotas enabled, and shows numeric **available** credits, or **Credits unavailable** on storage failure. With quotas off it is not rendered: a page load reads only the scope's quota switch and no credit or abuse table. Retained off-quota balances are not advertised as spendable. A number is not a promise of admission: availability, blocks and protections still apply. Guests, denied users and changed contexts cannot see stale values.
 
 The indicator refreshes on the native `ai-writer-credits-changed` Livewire event after delivered writer actions and successful administrative UI changes. For a host Livewire action that successfully changes credits through the public APIs, refresh the current browser's indicator with:
 

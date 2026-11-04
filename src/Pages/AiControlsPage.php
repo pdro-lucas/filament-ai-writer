@@ -26,6 +26,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Validation\ValidationException;
 use Livewire\Attributes\Locked;
 use PdroLucas\FilamentAiWriter\AiWriterPlugin;
+use PdroLucas\FilamentAiWriter\Concerns\UsesPluginNavigation;
 use PdroLucas\FilamentAiWriter\Controls\ControlContext;
 use PdroLucas\FilamentAiWriter\Models\ControlAudit;
 use Symfony\Component\HttpKernel\Exception\HttpException;
@@ -33,10 +34,17 @@ use Throwable;
 
 class AiControlsPage extends Page implements HasTable
 {
+  use UsesPluginNavigation;
+
   use InteractsWithTable;
 
   protected static ?string $title = 'AI Writer controls';
   protected static ?string $slug = 'ai-writer-controls';
+
+  protected static function pluginPage(): string
+  {
+    return 'controls';
+  }
 
   protected const DIRECTORY_DOCS_URL = 'https://github.com/pdro-lucas/filament-ai-writer/blob/main/docs/integration.md#panel-setup-and-a-scoped-actor-directory';
   protected string $view = 'filament-ai-writer::ai-controls';

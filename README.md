@@ -106,18 +106,18 @@ AiWriterPlugin::make()
 
 `usageTracking()` records each generation in the metadata-only usage ledger, deduplicates operations, gives each one an execution deadline that `ai-writer:recover-operations` can close, and registers the **AI Writer usage** statistics page (still gated by `authorizeViewStatistics()`). It does not read or reserve credits, blocks or abuse settings.
 
-`controls()` adds admission under one scope lock: AI availability, actor blocks, credits and abuse protection, plus the **AI Writer controls** and **My AI credits** pages and the credits indicator. It requires `usageTracking()`; enabling it alone throws a configuration error when the panel registers. Both modules use the same four package migrations (`000001`–`000004`): they build on each other and are published together.
+`controls()` adds admission under one scope lock: AI availability, actor blocks, credits and abuse protection, plus the **AI Writer controls** page and the credits indicator (with its popover). The **My AI credits** page is opt-in with `creditsPage()`. It requires `usageTracking()`; enabling it alone throws a configuration error when the panel registers. Both modules use the same four package migrations (`000001`–`000004`): they build on each other and are published together.
 
 Each closure receives the panel and is evaluated in two stages: once when the panel registers, which decides which pages, routes and render hooks exist; and again on every request, so turning a module off also denies already mounted pages, hides the credits indicator and changes how new generations run. Turning `controls()` off never deletes stored settings, balances or audit entries; turning it back on resumes them. Operations admitted while controls were on keep their own accounting: delivery consumes, and failure or recovery releases, the reservation they made, even if controls are off by then. Generations admitted while controls are off are not charged and do not count toward abuse limits later. With the modules off, `ai-writer:prune-usage` and `ai-writer:recover-operations` succeed without changes when the tables are not installed.
 
 ## Controls, credits and integration
 
-The plugin ships three native panel pages:
+The plugin ships three native panel pages (My AI credits is off until you call `creditsPage()`):
 
 | Surface | Required permission | Purpose |
 | --- | --- | --- |
 | **AI Writer controls** (`ai-writer-controls`) | `authorizeManage()` | Settings for availability, quotas and abuse protections; Users with a reusable Manage AI modal; paginated Activity audit |
-| **My AI credits** (`my-ai-credits`) | `authorizeUseAi()` | The authenticated actor's availability, balance and protection status |
+| **My AI credits** (`my-ai-credits`, opt-in) | `authorizeUseAi()` | The authenticated actor's availability, balance and protection status |
 | **AI Writer usage** (`ai-writer-usage`) | `authorizeViewStatistics()` | Read-only metadata statistics for the current panel |
 
 AI starts enabled, with quotas and all abuse protections off. No business limits are supplied. Management changes require a reason of at most 500 characters and write an audit entry atomically. Disabling AI or blocking an actor prevents **new admissions**; already admitted generations retain their delivery rights and execution deadlines. Quotas off does not override availability, blocks or permissions, and enabling quotas never retroactively charges a free generation.
@@ -131,8 +131,28 @@ use PdroLucas\FilamentAiWriter\AiWriterPlugin;
 
 AiWriterPlugin::make()
     ->usersTab(false)           // Keep Settings/Activity; manage users in your Resource.
-    ->creditsIndicator(false);  // Keep the personal credit page; hide its topbar indicator.
+    ->creditsIndicator(false);  // Hide the credits indicator; enforcement is unchanged.
 ```
+
+### Pages and navigation
+
+Each page has a class setter that takes `true` (built-in), a concrete subclass, `false` (no page and no route) or a `Closure` returning either; they are resolved when the panel registers the plugin. Disabling a page never changes permissions or the service behind it. A subclass replaces the original page, so the route is registered once.
+
+```php
+AiWriterPlugin::make()
+    ->statisticsPage(App\Filament\Pages\TeamUsage::class) // or false
+    ->controlsPage()                                        // true by default
+    ->creditsPage()                                         // off by default
+    ->navigationGroup('Administration')                     // default for all three pages
+    ->cluster(App\Filament\Clusters\Ai::class)
+    ->controlsNavigationLabel('AI settings')                // per page, wins over the default
+    ->statisticsNavigationIcon('heroicon-o-chart-bar')
+    ->creditsNavigationSort(30)
+    ->creditsSlug('my-credits')
+    ->statisticsNavigation(false);                          // hide from the menu, keep the route
+```
+
+Per page (`statistics…`, `controls…`, `credits…`): `NavigationGroup`, `NavigationLabel`, `NavigationIcon`, `NavigationSort`, `Slug`, `Cluster` and `Navigation` (menu visibility), each with a `get…()` getter (`has…()` for visibility). Plugin-wide defaults, used when a page has no value: `navigationGroup()`, `navigationIcon()`, `navigationSort()`, `cluster()` and `navigation()`. Values may be `Closure`s evaluated with `$panel` on each use. A value set on the plugin wins over a subclass's static properties. Without any setting the pages share a translatable **AI Writer** navigation group.
 
 Plugin API conventions: every on/off or text setter accepts a value or a `Closure` (`bool|Closure`, `string|Closure`) and is evaluated when used, not when the plugin is configured. Closures can type-hint or name `$panel` and, for authorization and `scope()`, `$actor` (also available as `$user`). Each setter has a matching getter (`usersTab()` / `hasUsersTab()`, `scope()` / `getScope()`, `authorizeManage()` / `canManage()`). Setters are grouped by feature prefix: `usageTracking()`, `controls()`, `controlsPage()`, `creditsPage()`, `creditsIndicator()`, `usersTab()`, `authorize*()` and `scope()`. Module and page switches also decide which pages and routes exist, so they are read when the panel registers the plugin as well as on later requests.
 

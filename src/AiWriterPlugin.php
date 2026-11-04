@@ -13,6 +13,7 @@ use Illuminate\Validation\ValidationException;
 use InvalidArgumentException;
 use LogicException;
 use PdroLucas\FilamentAiWriter\Abuse\Abuse;
+use PdroLucas\FilamentAiWriter\Concerns\ConfiguresNavigation;
 use PdroLucas\FilamentAiWriter\Controls\ActorIdentity;
 use PdroLucas\FilamentAiWriter\Controls\ControlContext;
 use PdroLucas\FilamentAiWriter\Controls\Controls;
@@ -26,6 +27,7 @@ use ReflectionClass;
 
 class AiWriterPlugin implements Plugin
 {
+  use ConfiguresNavigation;
   use EvaluatesClosures;
 
   protected ?Panel $panel = null;
@@ -45,11 +47,15 @@ class AiWriterPlugin implements Plugin
   protected bool|Closure $usersTab = true;
   protected bool|Closure $creditsIndicator = true;
 
-  /** @var class-string<AiControlsPage>|Closure */
-  protected string|Closure $controlsPage = AiControlsPage::class;
+  /** @var class-string<UsageStatisticsPage>|bool|Closure */
+  protected string|bool|Closure $statisticsPage = true;
 
-  /** @var class-string<MyAiCreditsPage>|Closure */
-  protected string|Closure $creditsPage = MyAiCreditsPage::class;
+  /** @var class-string<AiControlsPage>|bool|Closure */
+  protected string|bool|Closure $controlsPage = true;
+
+  /** The personal credits page is opt-in: the topbar indicator and its popover cover the common case. */
+  protected string|bool|Closure $creditsPage = false;
+
 
   public function abuse(): Abuse
   {
@@ -235,43 +241,96 @@ class AiWriterPlugin implements Plugin
     return $this->evaluateCondition($this->usersTab) && $this->hasActorDirectory();
   }
 
-  /** @param class-string<AiControlsPage>|Closure(): class-string<AiControlsPage> $page */
-  public function controlsPage(string|Closure $page): static
+  /**
+   * The Statistics page: true for the built-in page, a concrete UsageStatisticsPage subclass to replace it
+   * (never both, so the route is not duplicated), or false to register no page and no route.
+   * Disabling the page does not change permissions or the statistics service. Resolved when the panel registers the plugin.
+   *
+   * @param class-string<UsageStatisticsPage>|bool|Closure(): (class-string<UsageStatisticsPage>|bool) $page
+   */
+  public function statisticsPage(string|bool|Closure $page = true): static
   {
-    if (is_string($page)) {
-      $this->assertPage($page, AiControlsPage::class, 'Controls');
-    }
+    $this->assertPageSetting($page, UsageStatisticsPage::class, 'Statistics');
+    $this->statisticsPage = $page;
+    return $this;
+  }
+
+  /** @return class-string<UsageStatisticsPage>|null Null when the page is disabled. */
+  public function getStatisticsPage(): ?string
+  {
+    return $this->resolvePage($this->statisticsPage, UsageStatisticsPage::class, 'Statistics');
+  }
+
+  public function hasStatisticsPage(): bool
+  {
+    return $this->getStatisticsPage() !== null;
+  }
+
+  /**
+   * The Controls page: true for the built-in page, a concrete AiControlsPage subclass, or false for no page and no route.
+   * Disabling the page does not change permissions or the controls service.
+   *
+   * @param class-string<AiControlsPage>|bool|Closure(): (class-string<AiControlsPage>|bool) $page
+   */
+  public function controlsPage(string|bool|Closure $page = true): static
+  {
+    $this->assertPageSetting($page, AiControlsPage::class, 'Controls');
     $this->controlsPage = $page;
     return $this;
   }
 
-  /** @return class-string<AiControlsPage> */
-  public function getControlsPage(): string
+  /** @return class-string<AiControlsPage>|null Null when the page is disabled. */
+  public function getControlsPage(): ?string
   {
     return $this->resolvePage($this->controlsPage, AiControlsPage::class, 'Controls');
   }
 
-  /** @param class-string<MyAiCreditsPage>|Closure(): class-string<MyAiCreditsPage> $page */
-  public function creditsPage(string|Closure $page): static
+  public function hasControlsPage(): bool
   {
-    if (is_string($page)) {
-      $this->assertPage($page, MyAiCreditsPage::class, 'Credits');
-    }
+    return $this->getControlsPage() !== null;
+  }
+
+  /**
+   * The personal My AI credits page. Off by default; true enables the built-in page, a MyAiCreditsPage subclass replaces it.
+   *
+   * @param class-string<MyAiCreditsPage>|bool|Closure(): (class-string<MyAiCreditsPage>|bool) $page
+   */
+  public function creditsPage(string|bool|Closure $page = true): static
+  {
+    $this->assertPageSetting($page, MyAiCreditsPage::class, 'Credits');
     $this->creditsPage = $page;
     return $this;
   }
 
-  /** @return class-string<MyAiCreditsPage> */
-  public function getCreditsPage(): string
+  /** @return class-string<MyAiCreditsPage>|null Null when the page is disabled. */
+  public function getCreditsPage(): ?string
   {
     return $this->resolvePage($this->creditsPage, MyAiCreditsPage::class, 'Credits');
   }
 
-  protected function resolvePage(string|Closure $page, string $base, string $label): string
+  public function hasCreditsPage(): bool
+  {
+    return $this->getCreditsPage() !== null;
+  }
+
+  protected function assertPageSetting(string|bool|Closure $page, string $base, string $label): void
+  {
+    if (is_string($page)) {
+      $this->assertPage($page, $base, $label);
+    }
+  }
+
+  protected function resolvePage(string|bool|Closure $page, string $base, string $label): ?string
   {
     $page = $this->evaluate($page, ['panel' => $this->panel], [Panel::class => $this->panel]);
+    if ($page === false) {
+      return null;
+    }
+    if ($page === true) {
+      return $base;
+    }
     if (!is_string($page)) {
-      throw new InvalidArgumentException($label . ' page must resolve to a class name.');
+      throw new InvalidArgumentException($label . ' page must resolve to a class name, true or false.');
     }
     $this->assertPage($page, $base, $label);
     return $page;
@@ -279,8 +338,8 @@ class AiWriterPlugin implements Plugin
 
   protected function assertPage(string $page, string $base, string $label): void
   {
-    if (!is_a($page, $base, true) || (new ReflectionClass($page))->isAbstract()) {
-      throw new InvalidArgumentException($label . ' page must be a concrete ' . class_basename($base) . ' subclass.');
+    if (!class_exists($page) || !is_a($page, $base, true) || (new ReflectionClass($page))->isAbstract()) {
+      throw new InvalidArgumentException($label . ' page must be a concrete ' . class_basename($base) . ' subclass: ' . $page . ' given.');
     }
   }
 
@@ -299,11 +358,13 @@ class AiWriterPlugin implements Plugin
       // Core only: no pages, routes or render hooks, and no package table is read.
       return;
     }
-    $panel->pages([UsageStatisticsPage::class]);
+    if ($statisticsPage = $this->getStatisticsPage()) {
+      $panel->pages([$statisticsPage]);
+    }
     if (!$this->isControlsEnabled()) {
       return;
     }
-    $panel->pages([$this->getControlsPage(), $this->getCreditsPage()]);
+    $panel->pages(array_values(array_filter([$this->getControlsPage(), $this->getCreditsPage()])));
     $panel->renderHook(PanelsRenderHook::USER_MENU_BEFORE, function () use ($panel) {
       if (Filament::getCurrentPanel() !== $panel || !$this->isControlsEnabled() || !$this->hasCreditsIndicator()) { return ''; }
       try { if (!$this->canUseAi()) { return ''; } }
