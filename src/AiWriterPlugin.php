@@ -56,6 +56,10 @@ class AiWriterPlugin implements Plugin
   /** The personal credits page is opt-in: the topbar indicator and its popover cover the common case. */
   protected string|bool|Closure $creditsPage = false;
 
+  protected string|Closure $creditsIndicatorRenderHook = PanelsRenderHook::USER_MENU_BEFORE;
+  protected string|Closure|null $creditsIndicatorIcon = null;
+  protected string|array|Closure|null $creditsIndicatorColor = null;
+  protected string|Closure|null $creditsIndicatorLabel = null;
 
   public function abuse(): Abuse
   {
@@ -313,6 +317,64 @@ class AiWriterPlugin implements Plugin
     return $this->getCreditsPage() !== null;
   }
 
+  /** Where the indicator renders: any PanelsRenderHook constant. Read when the panel registers the plugin. */
+  public function creditsIndicatorRenderHook(string|Closure $hook): static
+  {
+    $this->creditsIndicatorRenderHook = $hook;
+    return $this;
+  }
+
+  public function getCreditsIndicatorRenderHook(): string
+  {
+    $hook = $this->evaluate($this->creditsIndicatorRenderHook, ['panel' => $this->panel], [Panel::class => $this->panel]);
+    if (!is_string($hook) || $hook === '') {
+      throw new InvalidArgumentException('The credits indicator render hook must be a PanelsRenderHook constant (a hook name).');
+    }
+    return $hook;
+  }
+
+  /** Icon of the indicator button (a Filament icon name or alias). Null keeps the default. */
+  public function creditsIndicatorIcon(string|Closure|null $icon): static
+  {
+    $this->creditsIndicatorIcon = $icon;
+    return $this;
+  }
+
+  public function getCreditsIndicatorIcon(): string
+  {
+    $icon = $this->evaluate($this->creditsIndicatorIcon, ['panel' => $this->panel], [Panel::class => $this->panel]);
+    return is_string($icon) && $icon !== '' ? $icon : 'heroicon-m-sparkles';
+  }
+
+  /** Color of the indicator button: a Filament color name or shade array. Null keeps the default (gray). */
+  public function creditsIndicatorColor(string|array|Closure|null $color): static
+  {
+    $this->creditsIndicatorColor = $color;
+    return $this;
+  }
+
+  public function getCreditsIndicatorColor(): string|array
+  {
+    $color = $this->evaluate($this->creditsIndicatorColor, ['panel' => $this->panel], [Panel::class => $this->panel]);
+    return (is_string($color) && $color !== '') || (is_array($color) && $color !== []) ? $color : 'gray';
+  }
+
+  /**
+   * Text of the indicator button. A Closure may take array $balance (the actor's own balance) and Panel $panel.
+   * Null shows the balance ("12 credits").
+   */
+  public function creditsIndicatorLabel(string|Closure|null $label): static
+  {
+    $this->creditsIndicatorLabel = $label;
+    return $this;
+  }
+
+  public function getCreditsIndicatorLabel(?array $balance = null): ?string
+  {
+    $label = $this->evaluate($this->creditsIndicatorLabel, ['panel' => $this->panel, 'balance' => $balance], [Panel::class => $this->panel]);
+    return is_string($label) && $label !== '' ? $label : null;
+  }
+
   protected function assertPageSetting(string|bool|Closure $page, string $base, string $label): void
   {
     if (is_string($page)) {
@@ -365,7 +427,7 @@ class AiWriterPlugin implements Plugin
       return;
     }
     $panel->pages(array_values(array_filter([$this->getControlsPage(), $this->getCreditsPage()])));
-    $panel->renderHook(PanelsRenderHook::USER_MENU_BEFORE, function () use ($panel) {
+    $panel->renderHook($this->getCreditsIndicatorRenderHook(), function () use ($panel) {
       if (Filament::getCurrentPanel() !== $panel || !$this->isControlsEnabled() || !$this->hasCreditsIndicator()) { return ''; }
       try { if (!$this->canUseAi()) { return ''; } }
       catch (\Throwable) { return ''; }

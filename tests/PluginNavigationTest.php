@@ -92,6 +92,24 @@ class PluginNavigationTest extends TestCase
     AiWriterPlugin::make()->statisticsPage($abstract->getName());
   }
 
+  #[DefineEnvironment('indicatorOnCustomHook')]
+  public function test_indicator_renders_only_in_the_configured_hook_with_its_own_icon_color_and_label(): void
+  {
+    $this->signIn();
+    $plugin = AiWriterPlugin::get();
+    $plugin->credits()->configure($plugin->controlContext(), true, 5, 'manual', 'Start');
+    Filament::bootCurrentPanel();
+
+    $hook = FilamentView::renderHook(PanelsRenderHook::SIDEBAR_NAV_START)->toHtml();
+    $this->assertStringContainsString('data-ai-controls="credits-indicator"', $hook);
+    $this->assertStringNotContainsString('data-ai-controls="credits-indicator"', FilamentView::renderHook(PanelsRenderHook::USER_MENU_BEFORE)->toHtml());
+    $this->assertSame('heroicon-o-bolt', $plugin->getCreditsIndicatorIcon());
+    $this->assertSame('warning', $plugin->getCreditsIndicatorColor());
+    $this->assertSame('Balance 5', $plugin->getCreditsIndicatorLabel(['available' => 5]));
+    \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Livewire\OwnCreditsIndicator::class)
+      ->assertSee('Balance 5')->assertSee('Next renewal')->assertSee('Used this period');
+  }
+
   protected function navigationConfigured($app): void
   {
     $this->panel($app, function (AiWriterPlugin $plugin): void {
@@ -109,6 +127,13 @@ class PluginNavigationTest extends TestCase
   protected function navigationReplaced($app): void
   {
     $this->panel($app, fn (AiWriterPlugin $plugin) => $plugin->statisticsPage(HostStatisticsPage::class)->controlsPage(false));
+  }
+
+  protected function indicatorOnCustomHook($app): void
+  {
+    $this->panel($app, fn (AiWriterPlugin $plugin) => $plugin->creditsIndicatorRenderHook(PanelsRenderHook::SIDEBAR_NAV_START)
+      ->creditsIndicatorIcon('heroicon-o-bolt')->creditsIndicatorColor('warning')
+      ->creditsIndicatorLabel(fn (array $balance): string => 'Balance ' . $balance['available']));
   }
 
   private function panel($app, \Closure $configure): void

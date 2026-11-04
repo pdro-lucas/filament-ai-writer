@@ -2,6 +2,7 @@
 
 namespace PdroLucas\FilamentAiWriter\Livewire;
 
+use Carbon\CarbonImmutable;
 use Filament\Facades\Filament;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Contracts\View\View;
@@ -38,7 +39,7 @@ class OwnCreditsIndicator extends Component
 
   public function render(): View
   {
-    $hidden = ['visible' => false, 'label' => '', 'tooltip' => '', 'url' => null];
+    $hidden = ['visible' => false, 'label' => '', 'tooltip' => '', 'url' => null, 'details' => [], 'icon' => 'heroicon-m-sparkles', 'color' => 'gray'];
     $state = $hidden;
     try {
       $panel = Filament::getCurrentPanel();
@@ -49,7 +50,8 @@ class OwnCreditsIndicator extends Component
       if (!$plugin->isControlsEnabled() || !$plugin->hasCreditsIndicator() || !$plugin->canUseAi()) {
         return view('filament-ai-writer::credits-indicator', $hidden);
       }
-      $state = ['visible' => true, 'label' => 'Credits unavailable', 'tooltip' => 'Credits unavailable. Try again later.', 'url' => null];
+      $state = ['visible' => true, 'label' => 'Credits unavailable', 'tooltip' => 'Credits unavailable. Try again later.', 'url' => null, 'details' => [],
+        'icon' => $plugin->getCreditsIndicatorIcon(), 'color' => $plugin->getCreditsIndicatorColor()];
       if ($this->contextSnapshot === null) {
         return view('filament-ai-writer::credits-indicator', $state);
       }
@@ -67,8 +69,15 @@ class OwnCreditsIndicator extends Component
         $state['label'] = 'Unlimited';
         $state['tooltip'] = 'Credits are off';
       } elseif ($balance['available'] !== null) {
-        $state['label'] = number_format($balance['available']) . ' credits';
+        $state['label'] = $plugin->getCreditsIndicatorLabel($balance) ?? number_format($balance['available']) . ' credits';
         $state['tooltip'] = 'Your available AI credits';
+        // Own balance only: the popover reads the same target-free snapshot as the label, never another actor's.
+        $state['details'] = [
+          'Available' => number_format($balance['available']) . ' credits',
+          'Used this period' => number_format($balance['consumed']) . ' of ' . number_format($balance['limit']) . ' credits',
+          'Next renewal' => $balance['renews_at'] === null ? 'Manual renewal'
+            : CarbonImmutable::parse($balance['renews_at'], 'UTC')->setTimezone(config('app.timezone'))->format('M j, Y · H:i T'),
+        ];
       } else {
         return view('filament-ai-writer::credits-indicator', $state);
       }
@@ -78,7 +87,8 @@ class OwnCreditsIndicator extends Component
       $state = $hidden;
     } catch (Throwable) {
       if ($state['visible']) {
-        $state = ['visible' => true, 'label' => 'Credits unavailable', 'tooltip' => 'Credits unavailable. Try again later.', 'url' => null];
+        $state = ['visible' => true, 'label' => 'Credits unavailable', 'tooltip' => 'Credits unavailable. Try again later.', 'url' => null, 'details' => [],
+          'icon' => $state['icon'], 'color' => $state['color']];
       }
     }
     return view('filament-ai-writer::credits-indicator', $state);
