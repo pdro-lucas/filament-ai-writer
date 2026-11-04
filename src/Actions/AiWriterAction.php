@@ -289,13 +289,18 @@ class AiWriterAction extends Action
 
   protected function dispatchEvent(string $field, GenerateResult $result): void
   {
-    AiTextGenerated::dispatch([
-      "user" => Filament::auth()->user(),
-      "field" => $field,
-      "provider" => $result->provider,
-      "model" => $result->model,
-      "result" => $result->text,
-    ]);
+    // The text is already delivered and charged; a failing host listener must not lose it.
+    try {
+      AiTextGenerated::dispatch([
+        "user" => Filament::auth()->user(),
+        "field" => $field,
+        "provider" => $result->provider,
+        "model" => $result->model,
+        "result" => $result->text,
+      ]);
+    } catch (\Throwable $exception) {
+      report($exception);
+    }
   }
 
   protected function generateAndDeliver(string $prompt, string $input, Get $get, Set $set): void

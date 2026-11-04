@@ -14,6 +14,7 @@ use Illuminate\Foundation\Testing\DatabaseMigrations;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Exceptions;
 use PdroLucas\FilamentAiWriter\Events\AiTextGenerated;
 use PdroLucas\FilamentAiWriter\Contracts\AiProvider;
 use PdroLucas\FilamentAiWriter\Data\GenerateResult;
@@ -220,6 +221,31 @@ class WriterDemoTest extends TestCase
       ->assertSet('data.content', 'Custom provider result');
     Event::assertDispatched(AiTextGenerated::class, fn ($event) => $event->payload['provider'] === 'host-provider' && $event->payload['model'] === 'returned');
     Http::assertNothingSent();
+  }
+
+  public function test_failing_generated_text_listener_keeps_the_single_charged_delivery(): void
+  {
+    $this->signIn();
+    $plugin = AiWriterPlugin::get();
+    $plugin->authorizeManageUsing(fn () => true);
+    $context = $plugin->controlContext();
+    $plugin->credits()->configure($context, true, 3, 'manual', 'Start quota');
+    Exceptions::fake();
+    $failure = new \RuntimeException('Host listener failed');
+    Event::listen(AiTextGenerated::class, fn () => throw $failure);
+    Http::fake(['https://api.openai.com/v1/chat/completions' => Http::response([
+      'choices' => [['message' => ['content' => 'Charged and delivered.'], 'finish_reason' => 'stop']],
+    ])]);
+
+    Livewire::test(WriterDemo::class)
+      ->callAction(TestAction::make('ai_writer')->schemaComponent('content', 'form'))
+      ->assertOk()
+      ->assertSet('data.content', 'Charged and delivered.');
+
+    Exceptions::assertReported(fn (\RuntimeException $reported): bool => $reported === $failure);
+    $this->assertSame(1, $plugin->credits()->ownBalance($context)['consumed']);
+    $this->assertSame(['delivered'], DB::table('filament_ai_writer_operations')->pluck('status')->all());
+    Http::assertSentCount(1);
   }
 
   public function test_notification_mailbox_survives_independent_workbench_requests(): void
