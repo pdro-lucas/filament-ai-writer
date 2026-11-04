@@ -208,7 +208,7 @@ class AiControlsTest extends TestCase
         $this->assertTrue($plugin->controlsService()->enabled($context));
       }
     }
-    \Illuminate\Support\Facades\DB::unprepared("CREATE TRIGGER reject_audit BEFORE INSERT ON filament_ai_writer_control_audit BEGIN SELECT RAISE(ABORT, 'audit failed'); END");
+    $release = $this->rejectStatements('insert', 'filament_ai_writer_control_audit');
     try {
       $plugin->controlsService()->setEnabled($context, false, 'Maintenance');
       $this->fail('Must surface audit failure');
@@ -217,9 +217,9 @@ class AiControlsTest extends TestCase
       $this->assertDatabaseCount('filament_ai_writer_policies', 0);
       $this->assertSame(0, $plugin->controlsService()->audit($context)->count());
     }
-    \Illuminate\Support\Facades\DB::unprepared('DROP TRIGGER reject_audit');
+    $release();
     $plugin->controlsService()->setBlocked($context, $actor, true, 'Hold');
-    \Illuminate\Support\Facades\DB::unprepared("CREATE TRIGGER reject_audit BEFORE INSERT ON filament_ai_writer_control_audit BEGIN SELECT RAISE(ABORT, 'audit failed'); END");
+    $release = $this->rejectStatements('insert', 'filament_ai_writer_control_audit');
     try {
       $plugin->controlsService()->setBlocked($context, $actor, false, 'Release');
       $this->fail('Must surface audit failure');
@@ -873,7 +873,7 @@ class AiControlsTest extends TestCase
     $this->assertSame(5, $credits->ownBalance($context)['available']);
     \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\AiControlsPage::class)
       ->call('showSection', 'activity')->assertSee('Credit policy updated')->assertSee('Extra credits granted');
-    \Illuminate\Support\Facades\DB::unprepared("CREATE TEMP TRIGGER fail_credit_audit BEFORE INSERT ON filament_ai_writer_control_audit BEGIN SELECT RAISE(ABORT, 'audit failure'); END");
+    $this->rejectStatements('insert', 'filament_ai_writer_control_audit');
     try {
       $credits->reset($context, $context->actor, 'Reset');
       $this->fail('Audit must be atomic');
@@ -909,21 +909,21 @@ class AiControlsTest extends TestCase
       $scheduled = $credits->ownBalance($context);
       $this->assertSame($initial['period_id'], $scheduled['period_id']);
       $this->assertSame(3, $scheduled['available']);
-      $this->assertSame('2026-03-08 05:00:00', $scheduled['renews_at']);
+      $this->assertSame('2026-03-08 05:00:00', preg_replace('/\\.0+$/', '', $scheduled['renews_at']));
       \Carbon\CarbonImmutable::setTestNow('2026-03-08 05:00:00 UTC');
       $next = $credits->ownBalance($context);
       $this->assertNotSame($initial['period_id'], $next['period_id']);
       $this->assertSame(2, $next['available']);
-      $this->assertSame('2026-03-09 04:00:00', $next['renews_at']); // 23-hour DST day
+      $this->assertSame('2026-03-09 04:00:00', preg_replace('/\\.0+$/', '', $next['renews_at'])); // 23-hour DST day
       $credits->configure($context, true, 2, 'weekly', 'Next calendar');
       $this->assertSame($next['period_id'], $credits->ownBalance($context)['period_id']);
-      $this->assertSame('2026-03-09 04:00:00', $credits->ownBalance($context)['renews_at']);
+      $this->assertSame('2026-03-09 04:00:00', preg_replace('/\\.0+$/', '', $credits->ownBalance($context)['renews_at']));
       \Carbon\CarbonImmutable::setTestNow('2026-03-09 04:00:00 UTC');
       $weekly = $credits->ownBalance($context);
-      $this->assertSame('2026-03-16 04:00:00', $weekly['renews_at']);
+      $this->assertSame('2026-03-16 04:00:00', preg_replace('/\\.0+$/', '', $weekly['renews_at']));
       $credits->configure($context, true, 2, 'monthly', 'Next month');
       \Carbon\CarbonImmutable::setTestNow('2026-03-16 04:00:00 UTC');
-      $this->assertSame('2026-04-01 04:00:00', $credits->ownBalance($context)['renews_at']);
+      $this->assertSame('2026-04-01 04:00:00', preg_replace('/\\.0+$/', '', $credits->ownBalance($context)['renews_at']));
     } finally {
       \Carbon\CarbonImmutable::setTestNow($previous);
     }
@@ -1161,14 +1161,14 @@ class AiControlsTest extends TestCase
     $this->assertFalse($audit->before['rate_enabled']);
     $this->assertSame(2, $audit->after['rate_limit']);
     \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\AiControlsPage::class)->call('showSection', 'activity')->assertSee('Abuse protections updated');
-    \Illuminate\Support\Facades\DB::unprepared("CREATE TRIGGER reject_audit BEFORE INSERT ON filament_ai_writer_control_audit BEGIN SELECT RAISE(ABORT, 'audit failed'); END");
+    $release = $this->rejectStatements('insert', 'filament_ai_writer_control_audit');
     try {
       $abuse->configure($context, ['rate_limit' => 3], 'Must roll back');
       $this->fail('Audit must be atomic');
     } catch (\Illuminate\Database\QueryException) {
       $this->assertSame(2, $abuse->policy($context)['rate_limit']);
     }
-    \Illuminate\Support\Facades\DB::unprepared('DROP TRIGGER reject_audit');
+    $release();
     try {
       $abuse->configure($context, ['rate_enabled' => false], str_repeat('a', 501));
       $this->fail('An invalid reason must be refused');

@@ -12,8 +12,9 @@
     <php>
         <env name="APP_ENV" value="testing" force="true"/>
         <env name="APP_KEY" value="base64:MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="/>
-        <env name="DB_CONNECTION" value="testing" force="true"/>
-        <env name="DB_DATABASE" value=":memory:" force="true"/>
+        <!-- SQLite :memory: by default; export DB_CONNECTION=mysql|pgsql and DB_* to run against a real database (see the testing section of README.md). -->
+        <env name="DB_CONNECTION" value="sqlite"/>
+        <env name="DB_DATABASE" value=":memory:"/>
         <env name="SESSION_DRIVER" value="array" force="true"/>
     </php>
 </phpunit>

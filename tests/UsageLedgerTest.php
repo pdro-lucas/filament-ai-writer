@@ -43,7 +43,7 @@ class UsageLedgerTest extends TestCase
     $this->assertSame('provider', $result->costSource);
     $this->assertNotNull($attempt->delivered_at);
     $this->assertStringNotContainsString('PRIVATE', json_encode($attempt->getAttributes()));
-    $this->assertSame('text', DB::selectOne('select typeof(cost_usd) as affinity from filament_ai_writer_usage')->affinity);
+    $this->assertSame('text', \Illuminate\Support\Facades\Schema::getColumnType('filament_ai_writer_usage', 'cost_usd'));
     Http::assertSentCount(1);
   }
 
@@ -322,7 +322,8 @@ class UsageLedgerTest extends TestCase
     Http::fake(['*' => Http::response($this->response(), 200, ['x-request-id' => 'request-id'])]);
     if ($stage !== 'callback') {
       $status = $stage === 'received' ? 'received' : 'delivered';
-      DB::unprepared("CREATE TEMP TRIGGER fail_usage_write BEFORE UPDATE ON filament_ai_writer_usage WHEN NEW.status = '$status' BEGIN SELECT RAISE(ABORT, 'PRIVATE database detail'); END");
+      // Fail only the write that sets this status; the failure handler's own update (status IN (...)) must still run.
+      $this->rejectStatements('update', 'filament_ai_writer_usage', fn (string $sql, array $bindings): bool => in_array($status, $bindings, true) && !str_contains($sql, ' in ('));
     }
     $field = $original;
     try {
@@ -498,7 +499,7 @@ class UsageLedgerTest extends TestCase
   {
     $this->login();
     Http::fake(function () {
-      DB::unprepared("CREATE TEMP TRIGGER fail_all_finalization BEFORE UPDATE ON filament_ai_writer_usage BEGIN SELECT RAISE(ABORT, 'PRIVATE storage outage'); END");
+      $this->rejectStatements('update', 'filament_ai_writer_usage');
       return Http::response($this->response());
     });
     try {
@@ -534,7 +535,7 @@ class UsageLedgerTest extends TestCase
       AiWriterPlugin::get()->generation()->run('prompt', 'input', fn () => null, fn () => null, 'content');
       $attempt = UsageAttempt::query()->sole();
       foreach (['started_at', 'received_at', 'completed_at', 'delivered_at'] as $column) {
-        $this->assertSame('2026-10-21 12:00:00', $attempt->getRawOriginal($column), $column);
+        $this->assertSame('2026-10-21 12:00:00', preg_replace('/\\.0+$/', '', $attempt->getRawOriginal($column)), $column);
         $date = $attempt->$column;
         $this->assertInstanceOf(CarbonImmutable::class, $date, $column);
         $this->assertSame('2026-10-21T12:00:00+00:00', $date->utc()->toIso8601String(), $column);

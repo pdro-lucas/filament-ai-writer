@@ -65,7 +65,7 @@ class UsageRetentionTest extends TestCase
   {
     $first = $this->row();
     $blocked = $this->row();
-    DB::unprepared("CREATE TEMP TRIGGER stop_pruning BEFORE DELETE ON filament_ai_writer_usage WHEN OLD.id = $blocked BEGIN SELECT RAISE(ABORT, 'PRIVATE database detail'); END");
+    $this->rejectStatements('delete', 'filament_ai_writer_usage', $blocked);
     config(['filament-ai-writer.retention' => ['days' => 1, 'batch_size' => 1]]);
     $this->artisan('ai-writer:prune-usage')->expectsOutputToContain('Cleanup stopped after deleting 1')->doesntExpectOutputToContain('PRIVATE')->assertFailed();
     $this->assertFalse(DB::table('filament_ai_writer_usage')->where('id', $first)->exists());
@@ -79,7 +79,7 @@ class UsageRetentionTest extends TestCase
     $late = null;
     $switched = false;
     DB::connection()->beforeExecuting(function (string $sql) use ($changed, &$switched, &$late): void {
-      if (!$switched && str_starts_with($sql, 'delete from "filament_ai_writer_usage"')) {
+      if (!$switched && preg_match('/^delete from [`"]filament_ai_writer_usage[`"]/', $sql)) {
         $switched = true;
         DB::table('filament_ai_writer_usage')->where('id', $changed)->update(['status' => 'pending', 'completed_at' => null]);
         $late = $this->row();

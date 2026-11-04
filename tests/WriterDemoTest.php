@@ -31,9 +31,11 @@ class WriterDemoTest extends TestCase
   public function test_generation_uses_the_tests_own_http_fake_and_an_isolated_database(): void
   {
     $this->assertSame('testing', DB::getDefaultConnection());
-    $this->assertSame('sqlite', DB::connection()->getDriverName());
-    $this->assertSame(':memory:', DB::connection()->getDatabaseName());
-    $this->assertSame('', DB::select('PRAGMA database_list')[0]->file);
+    $this->assertSame(env('DB_CONNECTION', 'sqlite'), DB::connection()->getDriverName());
+    $this->assertSame(env('DB_DATABASE', ':memory:'), DB::connection()->getDatabaseName());
+    if (DB::connection()->getDriverName() === 'sqlite') {
+      $this->assertSame('', DB::select('PRAGMA database_list')[0]->file);
+    }
 
     $this->get('/demo/writer-demo')->assertRedirect('/demo/login');
 
@@ -71,7 +73,8 @@ class WriterDemoTest extends TestCase
     $this->signIn();
     // A 0.7.1 host: no plugin on the panel and no package migrations.
     $this->artisan('migrate:reset', ['--path' => realpath(__DIR__ . '/../database/migrations'), '--realpath' => true])->assertSuccessful();
-    $this->assertSame([], array_filter(\Illuminate\Support\Facades\Schema::getTableListing(), fn (string $table): bool => str_contains($table, 'filament_ai_writer')));
+    $this->assertSame([], array_filter(\Illuminate\Support\Facades\Schema::getTableListing(), fn (string $table): bool => str_contains($table, 'filament_ai_writer')
+      && (DB::connection()->getDriverName() !== 'mysql' || str_starts_with($table, DB::connection()->getDatabaseName() . '.'))));
     Filament::setCurrentPanel(Panel::make()->id('unregistered')->path('unregistered')->authGuard('workbench'));
     Event::fake([AiTextGenerated::class]);
     Http::fake(['https://api.openai.com/v1/chat/completions' => Http::sequence()
