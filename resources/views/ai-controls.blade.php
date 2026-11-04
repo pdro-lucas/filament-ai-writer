@@ -1,5 +1,5 @@
 <x-filament-panels::page>
-  <x-filament::tabs :contained="true" label="AI administration" data-ai-controls="admin">
+  <x-filament::tabs :contained="true" :label="__('filament-ai-writer::controls.tabs_label')" data-ai-controls="admin">
     @foreach ($sections as $key => $label)
       <x-filament::tabs.item :active="$section === $key" wire:click="showSection('{{ $key }}')">{{ $label }}</x-filament::tabs.item>
     @endforeach

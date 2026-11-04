@@ -49,7 +49,7 @@ trait ReadsUsageStatistics
     if ($this->sharedFilters !== []) {
       return $this->sharedFilters;
     }
-    $today = CarbonImmutable::now(config('app.timezone', 'UTC'));
+    $today = CarbonImmutable::now(HostDates::timezone());
 
     return ['period' => ['from' => $today->subDays(6)->toDateString(), 'until' => $today->toDateString()]];
   }

@@ -169,10 +169,18 @@ class UsageStatisticsTest extends TestCase
     \Filament\Support\Facades\FilamentTimezone::set('America/Sao_Paulo');
     \Filament\Tables\Table::configureUsing(fn (\Filament\Tables\Table $table) => $table->defaultDateTimeDisplayFormat('d/m/Y H:i'));
     \Filament\Schemas\Schema::configureUsing(fn (\Filament\Schemas\Schema $schema) => $schema->defaultDateTimeDisplayFormat('d/m/Y H:i')->defaultDateDisplayFormat('d/m/Y'));
-    config(['filament-ai-writer.currency' => ['code' => 'BRL', 'symbol' => 'R$ ']]);
+    config(['filament-ai-writer.currency' => ['code' => 'BRL', 'symbol' => 'R$ '], 'app.timezone' => 'UTC']);
+    // 01:00 UTC is still the previous evening for this user (22:00 on the 20th): periods and buckets use the user's day.
+    $this->row('demo', ['started_at' => '2026-10-21 01:00:00']);
 
-    \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\UsageStatisticsPage::class)
-      ->assertSee('21/10/2026 09:00')->assertSee('Custo · BRL')->assertDontSee('USD');
+    $page = \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\UsageStatisticsPage::class)
+      ->assertSee('21/10/2026 09:00')->assertSee('20/10/2026 22:00')->assertSee('Custo · BRL')->assertDontSee('USD');
+    $page->call('setPeriod', 1)->assertCountTableRecords(1);
+    $this->assertSame(['from' => '2026-10-21', 'until' => '2026-10-21'], $page->instance()->getTableFilterState('period'));
+    $this->assertSame(1, AiWriterPlugin::get()->statistics()->dashboard($page->viewData('filters'))['attempts']);
+    $page->call('setPeriod', 7);
+    $buckets = AiWriterPlugin::get()->statistics()->dashboard($page->viewData('filters'))['charts']['time'];
+    $this->assertSame(['2026-10-20', '2026-10-21'], array_column($buckets, 'label'));
     // The request drawer writes its date as text, with the same host format and timezone.
     $started = collect(\PdroLucas\FilamentAiWriter\Schemas\UsageAttemptDetails::components(\PdroLucas\FilamentAiWriter\Models\UsageAttempt::query()->findOrFail($id)))
       ->flatMap(fn ($section) => $section->getDefaultChildComponents())->first(fn ($entry) => $entry->getName() === 'started');

@@ -57,7 +57,7 @@ class AiWriterPlugin implements Plugin
   /** @var class-string<AiControlsPage>|bool|Closure */
   protected string|bool|Closure $controlsPage = true;
 
-  /** The personal credits page is opt-in: the topbar indicator and its popover cover the common case. */
+  /** The personal credits page is opt-in: the credits indicator and its popover cover the common case. */
   protected string|bool|Closure $creditsPage = false;
 
   protected string|Closure $creditsIndicatorRenderHook = PanelsRenderHook::USER_MENU_BEFORE;
@@ -225,7 +225,7 @@ class AiWriterPlugin implements Plugin
     return 'ai-writer';
   }
 
-  /** Whether the topbar credits indicator is shown. Still requires controls() and enabled quotas. */
+  /** Whether the credits indicator is shown. Still requires controls() and enabled quotas. */
   public function creditsIndicator(bool|Closure $condition = true): static
   {
     $this->creditsIndicator = $condition;

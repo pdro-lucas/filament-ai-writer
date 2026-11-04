@@ -566,7 +566,7 @@ class AiControlsTest extends TestCase
       ->assertSee('5 créditos')->assertSee('Próxima renovação')->assertSee($renewal)->assertSee('Ver detalhes')
       ->assertDontSee('Used this period')->assertDontSee('Next renewal');
     \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\AiControlsPage::class)
-      ->assertSee('Controles do AI Writer')->assertSee('Disponibilidade')->assertSee('Salvar configurações de créditos')->assertSee($renewal)
+      ->assertSee('Controles do AI Writer')->assertSeeHtml('aria-label="Administração da IA"')->assertSee('Disponibilidade')->assertSee('Salvar configurações de créditos')->assertSee($renewal)
       ->assertDontSee('Availability')->assertDontSee('Save credit settings')->assertDontSee('Settings');
     \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\MyAiCreditsPage::class)
       ->assertSee('Meus créditos de IA')->assertSee('Créditos disponíveis')->assertSee($renewal)->assertDontSee('Available credits');

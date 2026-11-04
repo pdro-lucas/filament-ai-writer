@@ -122,17 +122,17 @@ class UsageStatisticsPage extends Page implements HasTable
             ->options(['1' => __('filament-ai-writer::statistics.filter.today'), '7' => __('filament-ai-writer::statistics.filter.days7'), '30' => __('filament-ai-writer::statistics.filter.days30'), 'custom' => __('filament-ai-writer::statistics.filter.custom')])
             ->afterStateUpdated(function (?string $state, Set $set): void {
               if (in_array($state, ['1', '7', '30'], true)) {
-                $today = CarbonImmutable::now(config('app.timezone', 'UTC'));
+                $today = CarbonImmutable::now(HostDates::timezone());
                 $set('from', $today->subDays((int) $state - 1)->toDateString());
                 $set('until', $today->toDateString());
               }
             }),
           DatePicker::make('from')->label(__('filament-ai-writer::statistics.filter.from'))->native(false)->format('Y-m-d')->closeOnDateSelection()->live()
             ->afterStateUpdated(fn (Set $set) => $set('preset', 'custom'))
-            ->default(fn (): string => CarbonImmutable::now(config('app.timezone'))->subDays(6)->toDateString()),
+            ->default(fn (): string => CarbonImmutable::now(HostDates::timezone())->subDays(6)->toDateString()),
           DatePicker::make('until')->label(__('filament-ai-writer::statistics.filter.until'))->native(false)->format('Y-m-d')->closeOnDateSelection()->live()
             ->afterStateUpdated(fn (Set $set) => $set('preset', 'custom'))
-            ->default(fn (): string => CarbonImmutable::now(config('app.timezone'))->toDateString()),
+            ->default(fn (): string => CarbonImmutable::now(HostDates::timezone())->toDateString()),
         ])->query(fn (Builder $query, array $data): Builder => $this->statistics()->filterPeriod($query, $data))
           ->indicateUsing(function (array $data): ?string {
             $from = $data['from'] ?? null;
@@ -171,7 +171,7 @@ class UsageStatisticsPage extends Page implements HasTable
   {
     $this->authorizeContext();
     abort_unless(in_array($days, [1, 7, 30], true), 422);
-    $today = CarbonImmutable::now(config('app.timezone', 'UTC'));
+    $today = CarbonImmutable::now(HostDates::timezone());
     $this->tableFilters['period'] = ['preset' => (string) $days, 'from' => $today->subDays($days - 1)->toDateString(), 'until' => $today->toDateString()];
     $this->getTableFiltersForm()->fill($this->tableFilters);
     $this->updatedTableFilters();

@@ -61,7 +61,7 @@ People who generate text now get either a specific denial they can act on (disab
 
 ### Texts, dates and currency
 
-Every text comes from `lang/vendor/filament-ai-writer` overrides or the package's `en` and `pt_BR` files. Dates follow your Filament date format and timezone (also per user), where the plugin used to fix `M j, Y H:i:s` and the application timezone. Costs show the code from `filament-ai-writer.currency`. See [Messages, translations and formats](integration.md#messages-translations-and-formats).
+Every text comes from `lang/vendor/filament-ai-writer` overrides or the package's `en` and `pt_BR` files. Dates follow your Filament date format and timezone (also per user), where the plugin used to fix `M j, Y H:i:s` and the application timezone. The Statistics period, the "Today" and 7/30-day presets and the chart buckets follow the user's timezone too, so a request just after local midnight lands on the local day shown in the table. Credit renewal calendars and usage pruning keep the application timezone, because they are shared business rules. Costs show the code from `filament-ai-writer.currency`. See [Messages, translations and formats](integration.md#messages-translations-and-formats).
 
 ### Native look
 

@@ -4,6 +4,7 @@ namespace PdroLucas\FilamentAiWriter\Usage;
 
 use Carbon\CarbonImmutable;
 use Filament\Facades\Filament;
+use PdroLucas\FilamentAiWriter\Support\HostDates;
 use Filament\Models\Contracts\FilamentUser;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Validation\ValidationException;
@@ -106,7 +107,7 @@ class UsageStatistics
   {
     $query = $this->filteredQuery($filters);
     $key = 'ai-writer.dashboard.' . hash('sha256', serialize([
-      Filament::getCurrentPanel()->getId(), config('app.timezone'), $query->toSql(), $query->getBindings(),
+      Filament::getCurrentPanel()->getId(), HostDates::timezone(), $query->toSql(), $query->getBindings(),
     ]));
     if (! request()->attributes->has($key)) {
       request()->attributes->set($key, $this->summary($query, includeCharts: true));
@@ -136,7 +137,7 @@ class UsageStatistics
   /** Use a timezone-independent calendar-day index to keep bucket boundaries stable when a scan expands. */
   private function localDayNumber(string $timestamp): int
   {
-    $local = CarbonImmutable::parse($timestamp, 'UTC')->setTimezone(config('app.timezone', 'UTC'));
+    $local = CarbonImmutable::parse($timestamp, 'UTC')->setTimezone(HostDates::timezone());
     return (int) (CarbonImmutable::createFromFormat('!Y-m-d', $local->format('Y-m-d'), 'UTC')->getTimestamp() / 86400);
   }
 
@@ -145,7 +146,7 @@ class UsageStatistics
     return CarbonImmutable::createFromFormat(
       '!Y-m-d',
       CarbonImmutable::createFromTimestampUTC($day * 86400)->format('Y-m-d'),
-      config('app.timezone', 'UTC'),
+      HostDates::timezone(),
     );
   }
 
@@ -273,7 +274,7 @@ class UsageStatistics
         throw ValidationException::withMessages(['period' => __('filament-ai-writer::statistics.validation.date_format')]);
       }
       try {
-        $date = CarbonImmutable::createFromFormat('!Y-m-d', $value, config('app.timezone', 'UTC'));
+        $date = CarbonImmutable::createFromFormat('!Y-m-d', $value, HostDates::timezone());
         if ($date->format('Y-m-d') !== $value) {
           throw new \InvalidArgumentException();
         }
