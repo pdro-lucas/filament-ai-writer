@@ -2,49 +2,27 @@
 
 namespace PdroLucas\FilamentAiWriter\Widgets;
 
-use Filament\Facades\Filament;
 use Filament\Widgets\ChartWidget;
-use Livewire\Attributes\Locked;
-use PdroLucas\FilamentAiWriter\AiWriterPlugin;
-use PdroLucas\FilamentAiWriter\Usage\UsageStatistics;
+use PdroLucas\FilamentAiWriter\Widgets\Concerns\ReadsUsageStatistics;
 
 class UsageCountChart extends ChartWidget
 {
+  use ReadsUsageStatistics;
+
   protected static bool $isLazy = false;
   protected ?string $pollingInterval = null;
   protected ?string $maxHeight = '120px';
 
-  #[Locked]
-  public string $panelId = '';
-
-  #[Locked]
-  public array $sharedFilters = [];
-
-  public static function canView(): bool
-  {
-    return UsageStatistics::canAccess();
-  }
-
   public function mount(): void
   {
-    $this->authorizeContext();
+    $this->bootUsageContext();
     parent::mount();
-  }
-
-  public function hydrate(): void
-  {
-    $this->authorizeContext();
-  }
-
-  protected function authorizeContext(): void
-  {
-    abort_unless(UsageStatistics::canAccess() && $this->panelId === Filament::getCurrentPanel()->getId(), 403);
   }
 
   protected function chartRows(): array
   {
     $this->authorizeContext();
-    return AiWriterPlugin::get()->statistics()->dashboard($this->sharedFilters)['charts'];
+    return $this->usageSummary()['charts'];
   }
 
   protected function getCachedData(): array
@@ -59,7 +37,7 @@ class UsageCountChart extends ChartWidget
     return [
       'labels' => array_column($rows, 'label'),
       'datasets' => [[
-        'label' => 'Requests',
+        'label' => __('Requests'),
         'data' => array_map(fn (array $row): int => $row['delivered'] + $row['failed'] + $row['active'], $rows),
         'borderWidth' => 0, 'borderRadius' => 2, 'maxBarThickness' => 48,
       ]],
@@ -69,7 +47,7 @@ class UsageCountChart extends ChartWidget
   public function getHeading(): string
   {
     $this->authorizeContext();
-    return 'Requests over time';
+    return __('Requests over time');
   }
 
   public function getDescription(): string

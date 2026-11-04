@@ -25,6 +25,7 @@ use PdroLucas\FilamentAiWriter\Pages\UsageStatisticsPage;
 use PdroLucas\FilamentAiWriter\Support\Reason;
 use PdroLucas\FilamentAiWriter\Usage\UsageStatistics;
 use ReflectionClass;
+use PdroLucas\FilamentAiWriter\Support\Icons;
 
 class AiWriterPlugin implements Plugin
 {
@@ -375,7 +376,7 @@ class AiWriterPlugin implements Plugin
   public function getCreditsIndicatorIcon(): string
   {
     $icon = $this->evaluate($this->creditsIndicatorIcon, ['panel' => $this->panel], [Panel::class => $this->panel]);
-    return is_string($icon) && $icon !== '' ? $icon : 'heroicon-m-sparkles';
+    return is_string($icon) && $icon !== '' ? $icon : Icons::resolve(Icons::INDICATOR);
   }
 
   /** Color of the indicator button: a Filament color name or shade array. Null keeps the default (gray). */

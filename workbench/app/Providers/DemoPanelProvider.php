@@ -6,6 +6,8 @@ use Filament\Http\Middleware\Authenticate;
 use Filament\Http\Middleware\DisableBladeIconComponents;
 use Filament\Http\Middleware\DispatchServingFilamentEvent;
 use Filament\Panel;
+use Filament\Support\Colors\Color;
+use Filament\View\PanelsRenderHook;
 use Filament\PanelProvider;
 use Illuminate\Cookie\Middleware\AddQueuedCookiesToResponse;
 use Illuminate\Cookie\Middleware\EncryptCookies;
@@ -27,6 +29,11 @@ class DemoPanelProvider extends PanelProvider
       ->id('demo')
       ->path('demo')
       ->brandName('AI Writer Workbench')
+      ->when(env('WORKBENCH_THEME') === 'custom', fn (Panel $panel): Panel => $panel
+        // Visual QA: different colors, radius and font prove the plugin screens follow the host theme.
+        ->colors(['primary' => Color::Emerald, 'gray' => Color::Stone, 'danger' => Color::Fuchsia])
+        ->font('Georgia', provider: \Filament\FontProviders\LocalFontProvider::class)
+        ->renderHook(PanelsRenderHook::HEAD_END, fn (): string => '<style>:root{--radius-md:0;--radius-lg:0;--radius-xl:1.5rem;--radius-2xl:1.5rem;--font-sans:Georgia,serif;--default-font-family:Georgia,serif}body{font-family:Georgia,serif}</style>'))
       ->authGuard('workbench')
       ->login()
       ->plugin(AiWriterPlugin::make()

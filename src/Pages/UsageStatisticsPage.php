@@ -6,7 +6,11 @@ use Carbon\CarbonImmutable;
 use Filament\Actions\Action;
 use Filament\Facades\Filament;
 use Filament\Forms\Components\DatePicker;
+use Filament\Forms\Components\Select;
 use Filament\Pages\Page;
+use Filament\Schemas\Components\EmbeddedTable;
+use Filament\Schemas\Components\Utilities\Set;
+use Filament\Schemas\Schema;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Concerns\InteractsWithTable;
 use Filament\Tables\Contracts\HasTable;
@@ -20,6 +24,7 @@ use PdroLucas\FilamentAiWriter\AiWriterPlugin;
 use PdroLucas\FilamentAiWriter\Concerns\UsesPluginNavigation;
 use PdroLucas\FilamentAiWriter\Controls\ActorIdentity;
 use PdroLucas\FilamentAiWriter\Models\UsageAttempt;
+use PdroLucas\FilamentAiWriter\Schemas\UsageAttemptDetails;
 use PdroLucas\FilamentAiWriter\Usage\UsageStatistics;
 
 class UsageStatisticsPage extends Page implements HasTable
@@ -82,7 +87,7 @@ class UsageStatisticsPage extends Page implements HasTable
       ->paginated([10, 25, 50])
       ->defaultPaginationPageOption(25)
       ->deferFilters(false)
-      ->filtersLayout(FiltersLayout::Hidden)
+      ->filtersLayout(FiltersLayout::Dropdown)
       ->filtersFormColumns(1)
       ->recordAction('details')
       ->recordActions([
@@ -90,8 +95,10 @@ class UsageStatisticsPage extends Page implements HasTable
           ->modalHeading('Request details')->modalSubmitAction(false)->modalCancelActionLabel('Close')
           ->modalContent(fn (UsageAttempt $record) => view('filament-ai-writer::usage-attempt-details', [
             // A record supplied by the action is never an authorization boundary.
-            'attempt' => $this->statistics()->query()->findOrFail($record->getKey()),
-            'timezone' => config('app.timezone', 'UTC'),
+            'schema' => Schema::make($this)->components(UsageAttemptDetails::components(
+              $this->statistics()->query()->findOrFail($record->getKey()),
+              config('app.timezone', 'UTC'),
+            )),
           ])),
       ])
       ->columns([
@@ -111,8 +118,22 @@ class UsageStatisticsPage extends Page implements HasTable
       ])
       ->filters([
         Filter::make('period')->schema([
-          DatePicker::make('from')->label('From')->native(false)->format('Y-m-d')->closeOnDateSelection()->default(fn (): string => CarbonImmutable::now(config('app.timezone'))->subDays(6)->toDateString()),
-          DatePicker::make('until')->label('Through')->native(false)->format('Y-m-d')->closeOnDateSelection()->default(fn (): string => CarbonImmutable::now(config('app.timezone'))->toDateString()),
+          // A shortcut over the two dates: editing a date returns it to "Custom range", and only the dates filter.
+          Select::make('preset')->label('Period')->native(false)->live()->selectablePlaceholder(false)->default('7')
+            ->options(['1' => 'Today', '7' => '7 days', '30' => '30 days', 'custom' => 'Custom range'])
+            ->afterStateUpdated(function (?string $state, Set $set): void {
+              if (in_array($state, ['1', '7', '30'], true)) {
+                $today = CarbonImmutable::now(config('app.timezone', 'UTC'));
+                $set('from', $today->subDays((int) $state - 1)->toDateString());
+                $set('until', $today->toDateString());
+              }
+            }),
+          DatePicker::make('from')->label('From')->native(false)->format('Y-m-d')->closeOnDateSelection()->live()
+            ->afterStateUpdated(fn (Set $set) => $set('preset', 'custom'))
+            ->default(fn (): string => CarbonImmutable::now(config('app.timezone'))->subDays(6)->toDateString()),
+          DatePicker::make('until')->label('Through')->native(false)->format('Y-m-d')->closeOnDateSelection()->live()
+            ->afterStateUpdated(fn (Set $set) => $set('preset', 'custom'))
+            ->default(fn (): string => CarbonImmutable::now(config('app.timezone'))->toDateString()),
         ])->query(fn (Builder $query, array $data): Builder => $this->statistics()->filterPeriod($query, $data)),
         $this->metadataFilter('actor', 'User')
           ->query(fn (Builder $query, array $data): Builder => filled($data['value'] ?? null) ? $this->statistics()->filterActor($query, $data['value']) : $query),
@@ -126,6 +147,8 @@ class UsageStatisticsPage extends Page implements HasTable
   {
     $state = $this->getRawTableFilterState($name);
     if ($name === 'period' && $state !== null) {
+      // The quick-range selector only drives the dates; it is never part of the filter itself.
+      unset($state['preset']);
       // These date-only pickers may carry a time (some Filament versions keep the current time on defaults).
       // Keep only the date part; strict period validation still owns parsing the date itself.
       foreach (['from', 'until'] as $boundary) {
@@ -143,7 +166,7 @@ class UsageStatisticsPage extends Page implements HasTable
     $this->authorizeContext();
     abort_unless(in_array($days, [1, 7, 30], true), 422);
     $today = CarbonImmutable::now(config('app.timezone', 'UTC'));
-    $this->tableFilters['period'] = ['from' => $today->subDays($days - 1)->toDateString(), 'until' => $today->toDateString()];
+    $this->tableFilters['period'] = ['preset' => (string) $days, 'from' => $today->subDays($days - 1)->toDateString(), 'until' => $today->toDateString()];
     $this->getTableFiltersForm()->fill($this->tableFilters);
     $this->updatedTableFilters();
   }
@@ -189,11 +212,23 @@ class UsageStatisticsPage extends Page implements HasTable
     return $this->actorLabels[$key];
   }
 
-  protected function getViewData(): array
+  public function content(Schema $schema): Schema
   {
-    // Only visible table filters may affect cards or the independently mounted chart.
+    return $schema->components([EmbeddedTable::make()]);
+  }
+
+  /** @return array<string, mixed> Only visible table filters may affect the overview or the independently mounted chart. */
+  protected function widgetFilters(): array
+  {
     $filters = array_intersect_key($this->tableFilters ?? [], array_flip(['period', 'actor', 'status']));
     $filters['period'] = $this->getTableFilterState('period') ?? [];
+
+    return $filters;
+  }
+
+  protected function getViewData(): array
+  {
+    $filters = $this->widgetFilters();
     $today = CarbonImmutable::now(config('app.timezone', 'UTC'));
     $periodPreset = 'custom';
     foreach ([1, 7, 30] as $days) {
@@ -206,6 +241,7 @@ class UsageStatisticsPage extends Page implements HasTable
     $this->periodPreset = $periodPreset;
     return [
       'summary' => $this->statistics()->dashboard($filters),
+      'widgetKey' => hash('sha256', json_encode($filters)),
       'filters' => $filters,
       'panel' => $this->panelId,
       'timezone' => config('app.timezone', 'UTC'),

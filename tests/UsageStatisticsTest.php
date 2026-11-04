@@ -165,6 +165,32 @@ class UsageStatisticsTest extends TestCase
     }
   }
 
+  public function test_metric_widgets_register_on_any_dashboard_and_follow_the_statistics_permission(): void
+  {
+    $this->login();
+    $this->row('demo', ['cost_usd' => '0.100000000001', 'cost_source' => 'provider', 'started_at' => \Carbon\CarbonImmutable::now('UTC')->toDateTimeString()]);
+    $this->row('private-panel', ['started_at' => \Carbon\CarbonImmutable::now('UTC')->toDateTimeString()]);
+    $this->assertTrue(\PdroLucas\FilamentAiWriter\Widgets\UsageOverviewStats::canView());
+    // No panel or filters passed, as on a host dashboard: the current panel and the last seven days apply.
+    \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Widgets\UsageOverviewStats::class)
+      ->assertSee('Requests')->assertSee('$0.100000000001', false)->assertSee('1 success');
+    \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Widgets\UsageOverviewStats::class, ['panelId' => 'private-panel'])->assertForbidden();
+    AiWriterPlugin::get()->authorizeViewStatistics(fn () => false);
+    $this->assertFalse(\PdroLucas\FilamentAiWriter\Widgets\UsageOverviewStats::canView());
+    $this->assertFalse(\PdroLucas\FilamentAiWriter\Widgets\UsageCountChart::canView());
+    \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Widgets\UsageOverviewStats::class)->assertForbidden();
+  }
+
+  public function test_views_stay_native_and_icons_resolve_through_filament_aliases(): void
+  {
+    foreach (\Illuminate\Support\Facades\File::allFiles(__DIR__ . '/../resources/views') as $view) {
+      $this->assertDoesNotMatchRegularExpression('/<style|\.fi-|font-size|#[0-9a-f]{3,6}\b/i', $view->getContents(), $view->getRelativePathname());
+    }
+    $this->assertSame('heroicon-o-sparkles', \PdroLucas\FilamentAiWriter\Support\Icons::resolve(\PdroLucas\FilamentAiWriter\Support\Icons::ACTION));
+    \Filament\Support\Facades\FilamentIcon::register([\PdroLucas\FilamentAiWriter\Support\Icons::ACTION => 'host-icon']);
+    $this->assertSame('host-icon', \PdroLucas\FilamentAiWriter\Actions\AiWriterAction::make()->getIcon());
+  }
+
   public function test_chart_options_keep_no_motion_compatible_with_filament_initialization(): void
   {
     $this->login();

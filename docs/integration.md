@@ -384,15 +384,22 @@ There is no polling or custom JavaScript. Direct service calls and other browser
 
 ## Customize presentation
 
-Filament owns colors, borders, radii, inputs, tables and modals. Use your native Filament theme. The plugin wrapper is transparent and its CSS sets grid gap, minimum width and left-aligned navigation. In your host theme:
+Every plugin screen is built only from Filament components and design tokens: sections, stats and chart widgets, tables, native filters, tabs and the dropdown. The views ship no `<style>`, no `.fi-*` overrides and no fixed font sizes or colors, and the package registers no CSS asset. Colors, radius, fonts and dark mode therefore come from your Filament theme, with nothing to override.
 
-```css
-:root { --ai-writer-controls-gap: 1rem; }
-/* Optional host styling, scoped to the controls page. */
-.ai-controls[data-ai-controls="admin"] .fi-section { box-shadow: none; }
+**Metric widgets.** `UsageOverviewStats` (requests, tokens, costs, average duration) and `UsageCountChart` can be placed on any dashboard of a panel that has the plugin, next to your own widgets:
+
+```php
+use PdroLucas\FilamentAiWriter\Widgets\UsageCountChart;
+use PdroLucas\FilamentAiWriter\Widgets\UsageOverviewStats;
+
+$panel->widgets([UsageOverviewStats::class, UsageCountChart::class]);
 ```
 
-Page hooks include `.ai-controls`, `.ai-controls-nav` and `data-ai-controls` values `admin`, `settings`, `users`, `activity`, `own-credits` and `credits-indicator`. Native table/status aliases include `.ai-controls-directory`, `.ai-controls-list`, `.ai-controls-ledger`, `.ai-controls-meta` and `.ai-controls-status` with `data-state="available|paused"`. Early draft palette variables do not map to native components.
+Both appear only for people allowed by `authorizeViewStatistics()` and show the last seven days for the current panel; on the Statistics page they follow its filters. Reorder or resize them with the usual widget `$sort` and `$columnSpan`, or subclass them.
+
+**Icons.** Replace any icon with `FilamentIcon::register()` using these aliases: `filament-ai-writer::action` (the writer button), `filament-ai-writer::indicator` (credits indicator; `creditsIndicatorIcon()` still wins), `filament-ai-writer::indicator.link` (popover link) and `filament-ai-writer::field-help` (help buttons in the settings forms).
+
+**Public CSS hooks.** These are the only plugin-owned selectors you may rely on; they carry no styles of their own: the `data-ai-controls` attribute with the values `admin`, `settings`, `users`, `activity`, `own-credits` and `credits-indicator`, and the classes `ai-controls-directory`, `ai-controls-list`, `ai-controls-ledger`, `ai-controls-meta` and `ai-controls-status` (the last with `data-state="available|paused"`). Everything else is Filament markup and follows Filament's own stability promises.
 
 Publish the namespaced views if you need reference copies:
 
@@ -405,7 +412,7 @@ Laravel overrides live under `resources/views/vendor/filament-ai-writer/`. Keep 
 | View path relative to that directory | Scope |
 | --- | --- |
 | `controls/balance.blade.php` | Built-in personal page only; receives `$balance`, `$abuse`, `$enabled`, `$blocked` and renders the native schema |
-| `controls/settings.blade.php`, `controls/users.blade.php`, `controls/styles.blade.php` | Controls partials and layout styles |
+| `controls/settings.blade.php`, `controls/users.blade.php` | Controls partials |
 | `ai-controls.blade.php`, `my-ai-credits.blade.php` | Full built-in page views |
 | `credits-indicator.blade.php`, `credits-indicator-hook.blade.php` | Indicator and panel hook |
 

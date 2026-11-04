@@ -24,7 +24,7 @@
 
       @if ($url !== null)
         <x-filament::dropdown.list>
-          <x-filament::dropdown.list.item tag="a" :href="$url" icon="heroicon-m-arrow-right">{{ __('View details') }}</x-filament::dropdown.list.item>
+          <x-filament::dropdown.list.item tag="a" :href="$url" :icon="\PdroLucas\FilamentAiWriter\Support\Icons::resolve(\PdroLucas\FilamentAiWriter\Support\Icons::INDICATOR_LINK)">{{ __('View details') }}</x-filament::dropdown.list.item>
         </x-filament::dropdown.list>
       @endif
     </x-filament::dropdown>

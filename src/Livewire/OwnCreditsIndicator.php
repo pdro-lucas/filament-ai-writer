@@ -12,6 +12,7 @@ use Livewire\Component;
 use PdroLucas\FilamentAiWriter\AiWriterPlugin;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 use Throwable;
+use PdroLucas\FilamentAiWriter\Support\Icons;
 
 class OwnCreditsIndicator extends Component
 {
@@ -39,7 +40,7 @@ class OwnCreditsIndicator extends Component
 
   public function render(): View
   {
-    $hidden = ['visible' => false, 'label' => '', 'tooltip' => '', 'url' => null, 'details' => [], 'icon' => 'heroicon-m-sparkles', 'color' => 'gray'];
+    $hidden = ['visible' => false, 'label' => '', 'tooltip' => '', 'url' => null, 'details' => [], 'icon' => Icons::resolve(Icons::INDICATOR), 'color' => 'gray'];
     $state = $hidden;
     try {
       $panel = Filament::getCurrentPanel();

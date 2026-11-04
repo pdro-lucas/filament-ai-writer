@@ -17,6 +17,7 @@ use PdroLucas\FilamentAiWriter\Exceptions\GenerationFailure;
 use PdroLucas\FilamentAiWriter\Generation\Generation;
 use PdroLucas\FilamentAiWriter\Support\FailureNotice;
 use PdroLucas\FilamentAiWriter\Events\AiTextGenerated;
+use PdroLucas\FilamentAiWriter\Support\Icons;
 
 class AiWriterAction extends Action
 {
@@ -44,7 +45,7 @@ class AiWriterAction extends Action
   {
     return parent::make($name ?? "ai_writer")
       ->label("")
-      ->icon("heroicon-o-sparkles")
+      ->icon(Icons::resolve(Icons::ACTION))
       ->color(Color::Fuchsia)
       ->tooltip("Generate with AI");
   }

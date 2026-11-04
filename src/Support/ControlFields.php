@@ -44,7 +44,7 @@ final class ControlFields
   public static function informationAction(string $name, string $label, string $details): Action
   {
     return Action::make('info' . ucfirst($name))->label('About ' . $label)
-      ->icon('heroicon-m-information-circle')->iconButton()->color('gray')->tooltip($details)
+      ->icon(Icons::resolve(Icons::FIELD_HELP))->iconButton()->color('gray')->tooltip($details)
       ->modalHeading($label)->modalDescription($details)
       ->modalSubmitAction(false)->modalCancelActionLabel('Close');
   }
