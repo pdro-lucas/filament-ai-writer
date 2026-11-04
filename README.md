@@ -5,8 +5,6 @@
 
 A Filament plugin for AI-assisted writing, with per-panel registration, host-defined permissions and a shared generation service. Its form action integrates OpenAI, Anthropic, Gemini and OpenRouter with scalar and array fields. Supported endpoints do not imply support for every model or optional API feature.
 
-> **Status: Beta** — This package is in active development. APIs may change and issues can occur.
-
 ## Documentation
 
 Start with [installation](#installation), [panel registration](#panel-plugin) and the [writing examples](#usage). Coming from 0.7.1? Read the [upgrade guide](docs/upgrade.md): the action alone needs nothing new. See the [integration guide](docs/integration.md) for administration, scoped directories, custom action placement, credits, translations and presentation. Reporting and maintenance are covered in [statistics](#current-panel-statistics) and [retention](#opt-in-usage-retention).
