@@ -163,8 +163,8 @@ The host owns those rules; the plugin rechecks the configured callbacks on the s
 | Deny AI use | `authorizeUseAiUsing(fn (): bool => false)` | Denies new writer requests and own-credit surfaces; registration, storage and ledger remain required |
 | Deny statistics | `authorizeViewStatisticsUsing(fn (): bool => false)` | Denies the statistics route and later reads, independently of use/manage |
 | Deny administration | `authorizeManageUsing(fn (): bool => false)` | Denies controls and management actions/reads/writes, independently of use/statistics |
-| Pause new generations for a scope | `controls()->setEnabled($context, false, $reason)` | Audited admission control; already admitted calls can finish |
-| Block one actor | `controls()->setBlocked($context, $actor, true, $reason)` | Audited scoped block on new admissions; requires the actor directory |
+| Pause new generations for a scope | `controlsService()->setEnabled($context, false, $reason)` | Audited admission control; already admitted calls can finish |
+| Block one actor | `controlsService()->setBlocked($context, $actor, true, $reason)` | Audited scoped block on new admissions; requires the actor directory |
 | Turn quotas off | `credits()->configure($context, false, $limit, $renewal, $reason)` | Keeps ledger/history; new admissions are free of credit reservation, subject to all other checks |
 | Turn protections off | `abuse()->configure()` with individual flags `false` | Each protection is independent of availability, permissions and quotas |
 | Keep all usage history | Leave `retention.days` unset/`null` and do not prune | Retention is opt-in; no scheduler is installed |
