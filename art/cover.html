@@ -83,6 +83,7 @@
       <span class="chip"><svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>Usage statistics</span>
       <span class="chip"><svg viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 4.5-3.4 8-8 9-4.6-1-8-4.5-8-9V6z"/><path d="M9 12l2 2 4-4"/></svg>Abuse protection</span>
       <span class="chip"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h10M4 18h7"/><circle cx="18" cy="16" r="3"/></svg>Native to your theme</span>
+      <span class="chip"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3z"/></svg>Multilingual</span>
     </div>
     <div class="meta">OpenAI <i></i> Anthropic <i></i> Gemini <i></i> OpenRouter <i></i> Filament 4 &amp; 5</div>
   </div>
@@ -130,24 +131,6 @@ for(let i=-360;i<=760;i+=40){
 const sh=(x,y,rx,ry)=>{const c=P(x,y,-40);el('ellipse',{cx:c[0],cy:c[1]+6,rx,ry,fill:'oklch(0.35 0.04 50 / .12)',filter:'blur(16px)'})};
 sh(200,170,330,120); sh(120,440,120,50);
 
-// ---------- satellite: abuse protection ----------
-box(60,385,-40,120,110,30,'var(--paper)','var(--sand-2)','var(--sand)');
-(function(){
-  // cable from main platform front face to satellite
-  const a=P(120,330,-24), b=P(120,385,-24);
-  el('path',{d:`M${a[0]} ${a[1]} C ${a[0]-34} ${a[1]+44}, ${b[0]-40} ${b[1]-8}, ${b[0]} ${b[1]}`,fill:'none',stroke:INK,'stroke-width':2.4,'stroke-linecap':'round'});
-  [a,b].forEach(p=>el('circle',{cx:p[0],cy:p[1],r:4.5,fill:'var(--paper)',stroke:INK,'stroke-width':2}));
-  // shield standing on the satellite
-  box(92,428,-10,64,6,72,'var(--lilac-soft)','var(--lilac)','var(--lilac-soft)');
-  const g=el('g',{transform:wallX(92,434,62)});
-  el('path',{d:'M32 8 L54 16 V34 C54 48 45 57 32 62 C19 57 10 48 10 34 V16 Z',fill:'var(--paper)',stroke:INK,'stroke-width':2},g);
-  el('path',{d:'M23 35 l7 7 13 -14',fill:'none',stroke:INK,'stroke-width':2.6,'stroke-linecap':'round','stroke-linejoin':'round'},g);
-  // pause toggle on the satellite top
-  const t=el('g',{transform:onTop(72,450,-10)});
-  el('rect',{x:0,y:4,width:40,height:20,rx:10,fill:'var(--amber)',stroke:INK,'stroke-width':1.6},t);
-  el('circle',{cx:30,cy:14,r:6.5,fill:'#fff',stroke:INK,'stroke-width':1.6},t);
-})();
-
 // ---------- main platform ----------
 box(0,0,-40,380,330,40,'var(--paper)','var(--sand-2)','var(--sand)');
 el('polygon',{points:pts([P(14,14,0),P(366,14,0),P(366,316,0),P(14,316,0)]),fill:'none',stroke:'oklch(0.45 0.03 60 / .3)','stroke-width':1.2,'stroke-dasharray':'1 6','stroke-linecap':'round'});
@@ -188,25 +171,50 @@ el('polygon',{points:pts([P(14,14,0),P(366,14,0),P(366,316,0),P(14,316,0)]),fill
   el('rect',{x:14,y:36,width:w-28,height:70,rx:8,fill:'#fff',stroke:INK,'stroke-width':1.6},g);
   [[26,52,204,'oklch(0.76 0.02 65)'],[26,67,224,'oklch(0.76 0.02 65)'],[26,82,148,'var(--amber)']].forEach(([x,y,l,f])=>el('rect',{x,y,width:l,height:6,rx:3,fill:f},g));
   el('rect',{x:178,y:78,width:2.6,height:15,rx:1,fill:INK},g);
-  el('rect',{x:w-134,y:116,width:120,height:26,rx:13,fill:'var(--amber)',stroke:INK,'stroke-width':1.6},g);
-  el('path',{d:`M${w-120} 129 l2.1 -5.6 2.1 5.6 5.6 2.1 -5.6 2.1 -2.1 5.6 -2.1 -5.6 -5.6 -2.1z`,fill:INK,transform:'translate(0,-2)'},g);
-  T(g,w-103,133,'Write with AI',{w:600,s:11.5});
+})();
+
+// ---------- satellite: abuse protection ----------
+(function(){
+  // cable from main platform front face to satellite
+  const a=P(120,330,-24), b=P(120,385,-24);
+  el('path',{d:`M${a[0]} ${a[1]} C ${a[0]-34} ${a[1]+44}, ${b[0]-40} ${b[1]-8}, ${b[0]} ${b[1]}`,fill:'none',stroke:INK,'stroke-width':2.4,'stroke-linecap':'round'});
+  el('circle',{cx:a[0],cy:a[1],r:4.5,fill:'var(--paper)',stroke:INK,'stroke-width':2});
+  box(60,385,-40,120,110,40,'var(--paper)','var(--sand-2)','var(--sand)');
+  // shield standing on the satellite
+  box(92,428,0,64,6,72,'var(--lilac-soft)','var(--lilac)','var(--lilac-soft)');
+  const g=el('g',{transform:wallX(92,434,72)});
+  el('path',{d:'M32 8 L54 16 V34 C54 48 45 57 32 62 C19 57 10 48 10 34 V16 Z',fill:'var(--paper)',stroke:INK,'stroke-width':2},g);
+  el('path',{d:'M23 35 l7 7 13 -14',fill:'none',stroke:INK,'stroke-width':2.6,'stroke-linecap':'round','stroke-linejoin':'round'},g);
+  // pause toggle on the satellite top
+  const t=el('g',{transform:onTop(72,450,0)});
+  el('rect',{x:0,y:4,width:40,height:20,rx:10,fill:'var(--amber)',stroke:INK,'stroke-width':1.6},t);
+  el('circle',{cx:30,cy:14,r:6.5,fill:'#fff',stroke:INK,'stroke-width':1.6},t);
 })();
 
 // floating AI spark with its beam down to the button
+const sparkle=(cx,cy,rx,ry,k=0.16)=>{const kx=rx*k*1.25,ky=ry*k;return `M${cx} ${cy-ry} Q${cx+kx} ${cy-ky} ${cx+rx} ${cy} Q${cx+kx} ${cy+ky} ${cx} ${cy+ry} Q${cx-kx} ${cy+ky} ${cx-rx} ${cy} Q${cx-kx} ${cy-ky} ${cx} ${cy-ry}Z`};
+const btn=P(272,286,10);
 (function(){
-  const btn=P(64+282-74,150+129,10);
-  const [sx,sy]=P(300,250,215);
+  const [sx,sy]=P(300,250,225);
   el('circle',{cx:sx,cy:sy,r:150,fill:'url(#spark)'});
-  el('path',{d:`M${sx} ${sy+52} L ${btn[0]} ${btn[1]-10}`,stroke:INK,'stroke-width':2,'stroke-dasharray':'1 7','stroke-linecap':'round'});
-  el('ellipse',{cx:btn[0],cy:btn[1]-8,rx:16,ry:8,fill:'none',stroke:INK,'stroke-width':1.6,'stroke-dasharray':'2 4'});
-  const star=(cx,cy,R,r)=>{const p=[];for(let i=0;i<8;i++){const a=-Math.PI/2+i*Math.PI/4;const rr=i%2?r:R;p.push([cx+Math.cos(a)*rr,cy+Math.sin(a)*rr])}return p};
-  const F=star(sx,sy,52,14), B=star(sx+7,sy+9,52,14);
-  el('polygon',{points:pts(B),fill:'var(--amber-deep)',stroke:INK,'stroke-width':2.2,'stroke-linejoin':'round'});
-  F.map((p,i)=>[p,F[(i+1)%8],B[(i+1)%8],B[i]]).sort((a,b)=>(a[0][1]+a[1][1])-(b[0][1]+b[1][1])).forEach(q=>el('polygon',{points:pts(q),fill:'var(--amber-deep)',stroke:INK,'stroke-width':2,'stroke-linejoin':'round'}));
-  el('polygon',{points:pts(star(sx,sy,52,14)),fill:'var(--amber)',stroke:INK,'stroke-width':2.4,'stroke-linejoin':'round'});
-  el('path',{d:`M${sx-5} ${sy-30} q 1 16 -8 23`,fill:'none',stroke:'#fff','stroke-width':3.2,'stroke-linecap':'round',opacity:.85});
-  [[sx+40,sy-92,13,4.2],[sx-78,sy-6,10,3.2],[sx+70,sy+58,8,2.6]].forEach(([x,y,R,r])=>el('polygon',{points:pts(star(x,y,R,r)),fill:'var(--paper)',stroke:INK,'stroke-width':1.8,'stroke-linejoin':'round'}));
+  el('path',{d:`M${sx} ${sy+74} L ${btn[0]} ${btn[1]-40}`,stroke:INK,'stroke-width':2,'stroke-dasharray':'1 7','stroke-linecap':'round'});
+  const rx=44,ry=60,d=11,k=0.16,kx=rx*k*1.25,ky=ry*k;
+  // thickness: sweep of the lower outline straight down
+  el('path',{d:`M${sx-rx} ${sy} Q${sx-kx} ${sy+ky} ${sx} ${sy+ry} Q${sx+kx} ${sy+ky} ${sx+rx} ${sy} L${sx+rx} ${sy+d} Q${sx+kx} ${sy+ky+d} ${sx} ${sy+ry+d} Q${sx-kx} ${sy+ky+d} ${sx-rx} ${sy+d}Z`,fill:'var(--amber-deep)',stroke:INK,'stroke-width':2.2,'stroke-linejoin':'round'});
+  el('path',{d:sparkle(sx,sy,rx,ry,k),fill:'var(--amber)',stroke:INK,'stroke-width':2.4,'stroke-linejoin':'round'});
+  el('path',{d:`M${sx-4} ${sy-38} Q ${sx-3} ${sy-16} ${sx-12} ${sy-8}`,fill:'none',stroke:'#fff','stroke-width':3.4,'stroke-linecap':'round',opacity:.9});
+  [[sx+46,sy-98,10,13],[sx-82,sy-10,8,10],[sx+76,sy+54,6.5,8]].forEach(([x,y,a,b])=>el('path',{d:sparkle(x,y,a,b,0.2),fill:'var(--paper)',stroke:INK,'stroke-width':1.8,'stroke-linejoin':'round'}));
+})();
+
+// "Write with AI" button, facing the viewer above the form
+(function(){
+  const w=176,h=44,[x,y]=[btn[0]-w/2,btn[1]-h-14];
+  el('ellipse',{cx:btn[0],cy:btn[1]-4,rx:62,ry:14,fill:'oklch(0.35 0.04 50 / .14)',filter:'blur(3px)'});
+  const g=el('g',{transform:`translate(${x},${y})`});
+  el('rect',{x:4,y:5,width:w,height:h,rx:h/2,fill:INK},g);
+  el('rect',{x:0,y:0,width:w,height:h,rx:h/2,fill:'var(--amber)',stroke:INK,'stroke-width':2},g);
+  el('path',{d:sparkle(30,h/2,8,10,0.2),fill:INK},g);
+  T(g,48,h/2+6,'Write with AI',{w:600,s:17});
 })();
 
 // floating "delivered" toast
