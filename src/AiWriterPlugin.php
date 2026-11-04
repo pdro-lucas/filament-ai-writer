@@ -191,9 +191,10 @@ class AiWriterPlugin implements Plugin
     return $this;
   }
 
+  /** The Users section needs a directory; without one it is hidden and unreachable. */
   public function hasUsersTab(): bool
   {
-    return $this->hasUsersTab;
+    return $this->hasUsersTab && $this->hasActorDirectory();
   }
 
   /** @var class-string<\PdroLucas\FilamentAiWriter\Pages\AiControlsPage> */
@@ -244,6 +245,8 @@ class AiWriterPlugin implements Plugin
       if (Filament::getCurrentPanel() !== $panel || !$this->isControlsEnabled() || !$this->hasCreditsInTopbar()) { return ''; }
       try { if (!$this->canUseAi()) { return ''; } }
       catch (\Throwable) { return ''; }
+      try { if (!$this->credits()->quotaEnabled($this->controlContext())) { return ''; } }
+      catch (\Throwable) { /* Unknown quota state: the indicator reports credits as unavailable. */ }
       return view('filament-ai-writer::credits-indicator-hook', ['panelId' => $panel->getId()]);
     });
   }

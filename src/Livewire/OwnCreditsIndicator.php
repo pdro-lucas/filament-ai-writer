@@ -57,6 +57,9 @@ class OwnCreditsIndicator extends Component
       if ($context->snapshot() !== $this->contextSnapshot) {
         return view('filament-ai-writer::credits-indicator', $hidden);
       }
+      if (!$plugin->credits()->quotaEnabled($context)) {
+        return view('filament-ai-writer::credits-indicator', $hidden);
+      }
       // Reconcile this actor's expired operations before showing available credits.
       $plugin->abuse()->ownStatus($context);
       $balance = $plugin->credits()->ownBalance($context);

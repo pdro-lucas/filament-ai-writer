@@ -193,16 +193,22 @@ class AiControlsTest extends TestCase
     $plugin = AiWriterPlugin::get();
     $context = $plugin->controlContext();
     $this->assertFalse($plugin->hasActorDirectory());
+    // Without a directory the Users section is hidden and unreachable; Settings points managers to the setup docs.
     \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\AiControlsPage::class)
-      ->call('showSection', 'users')->assertSee('User search is not configured.')
+      ->assertSee('Set up the user directory')->assertSee('docs/integration.md#panel-setup-and-a-scoped-actor-directory', false)
+      ->assertDontSee('wire:click="showSection(\'users\')"', false)
       ->callAction('disable', data: ['reason' => 'Maintenance'])
-      ->call('showSection', 'settings')->assertSee('AI is disabled')->call('showSection', 'activity')->assertCountTableRecords(1);
+      ->assertSee('AI is disabled')->call('showSection', 'activity')->assertCountTableRecords(1);
+    \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\AiControlsPage::class)->call('showSection', 'users')->assertForbidden();
     try {
       $plugin->controlsService()->setBlocked($context, $context->actor, true, 'Hold');
       $this->fail('Unvalidated identity must be rejected');
     } catch (\Illuminate\Validation\ValidationException) {
       $this->assertFalse($plugin->controlsService()->blocked($context, $context->actor));
     }
+    Filament::setCurrentPanel(Filament::getPanel('demo'));
+    \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\AiControlsPage::class)
+      ->assertDontSee('Set up the user directory')->assertSee('wire:click="showSection(\'users\')"', false);
   }
 
   public function test_page_block_action_revalidates_directory_selection_and_limits_escaped_search_results(): void
@@ -413,7 +419,13 @@ class AiControlsTest extends TestCase
     $plugin->authorizeManageUsing(fn () => true);
     $plugin->credits()->configure($context, false, 1000, 'manual', 'Turn off');
     $plugin->authorizeManageUsing(fn () => false);
-    $indicator->dispatch('ai-writer-credits-changed')->assertSee('Unlimited')->assertSee('Credits are off')->assertDontSee('1,008 credits');
+    // Quotas off: a mounted indicator hides, and a page load renders none and reads no credits or abuse table.
+    $indicator->dispatch('ai-writer-credits-changed')->assertDontSee('Unlimited')->assertDontSee('1,008 credits')->assertDontSee('Credits unavailable');
+    $queries = $this->packageQueries(function (): void {
+      $this->get('/demo/writer-demo')->assertOk()->assertDontSee('credits-indicator', false);
+    });
+    $this->assertSame([], array_values(array_filter($queries, fn (string $sql): bool => !str_contains($sql, 'filament_ai_writer_policies'))));
+    $this->assertCount(1, $queries, 'Only the quota switch is read.');
     \Illuminate\Support\Facades\Schema::rename('filament_ai_writer_policies', 'unavailable_policies');
     try { $indicator->dispatch('ai-writer-credits-changed')->assertSee('Credits unavailable')->assertDontSee('0 credits'); }
     finally { \Illuminate\Support\Facades\Schema::rename('unavailable_policies', 'filament_ai_writer_policies'); }
@@ -422,29 +434,30 @@ class AiControlsTest extends TestCase
   public function test_topbar_is_panel_scoped_permission_gated_opt_out_and_snapshot_fenced(): void
   {
     Filament::setCurrentPanel(Filament::getPanel('demo'));
-    \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Livewire\OwnCreditsIndicator::class)->assertDontSee('Unlimited');
+    \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Livewire\OwnCreditsIndicator::class)->assertDontSee('5 credits');
     $this->login();
     $plugin = AiWriterPlugin::get();
     $scope = 'tenant:A';
     $plugin->resolveScopeUsing(function () use (&$scope) { return $scope; });
-    $indicator = \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Livewire\OwnCreditsIndicator::class)->assertSee('Unlimited');
+    $plugin->credits()->configure($plugin->controlContext(), true, 5, 'manual', 'Start');
+    $indicator = \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Livewire\OwnCreditsIndicator::class)->assertSee('5 credits');
     $scope = 'tenant:B';
-    $indicator->dispatch('ai-writer-credits-changed')->assertDontSee('Unlimited')->assertDontSee(' credits');
+    $indicator->dispatch('ai-writer-credits-changed')->assertDontSee('5 credits')->assertDontSee(' credits');
     $scope = 'tenant:A';
     $indicator = \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Livewire\OwnCreditsIndicator::class);
     $plugin->authorizeUseAiUsing(fn () => false);
-    $indicator->dispatch('ai-writer-credits-changed')->assertDontSee('Unlimited');
+    $indicator->dispatch('ai-writer-credits-changed')->assertDontSee('5 credits');
     $plugin->authorizeUseAiUsing(fn () => true)->creditsInTopbar(false);
-    \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Livewire\OwnCreditsIndicator::class)->assertDontSee('Unlimited');
+    \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Livewire\OwnCreditsIndicator::class)->assertDontSee('5 credits');
     $plugin->creditsInTopbar(true);
     Filament::bootCurrentPanel();
     $hook = \Filament\Support\Facades\FilamentView::renderHook(\Filament\View\PanelsRenderHook::USER_MENU_BEFORE)->toHtml();
     $this->assertStringContainsString('data-ai-controls="credits-indicator"', $hook);
-    $indicator = \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Livewire\OwnCreditsIndicator::class)->assertSee('Unlimited');
+    $indicator = \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Livewire\OwnCreditsIndicator::class)->assertSee('5 credits');
     $plugin->controls(false);
     $this->assertSame([], $this->packageQueries(function () use ($indicator): void {
-      $indicator->dispatch('ai-writer-credits-changed')->assertDontSee('Unlimited');
-      \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Livewire\OwnCreditsIndicator::class)->assertDontSee('Unlimited')->assertDontSee('Credits unavailable');
+      $indicator->dispatch('ai-writer-credits-changed')->assertDontSee('5 credits');
+      \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Livewire\OwnCreditsIndicator::class)->assertDontSee('5 credits')->assertDontSee('Credits unavailable');
       $this->assertStringNotContainsString('credits-indicator', \Filament\Support\Facades\FilamentView::renderHook(\Filament\View\PanelsRenderHook::USER_MENU_BEFORE)->toHtml());
     }));
     $plugin->controls();
@@ -453,8 +466,8 @@ class AiControlsTest extends TestCase
     Filament::setCurrentPanel($other);
     $hook = \Filament\Support\Facades\FilamentView::renderHook(\Filament\View\PanelsRenderHook::USER_MENU_BEFORE)->toHtml();
     $this->assertStringNotContainsString('credits-indicator', $hook);
-    $indicator->dispatch('ai-writer-credits-changed')->assertDontSee('Unlimited');
-    \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Livewire\OwnCreditsIndicator::class)->assertDontSee('Unlimited');
+    $indicator->dispatch('ai-writer-credits-changed')->assertDontSee('5 credits');
+    \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Livewire\OwnCreditsIndicator::class)->assertDontSee('5 credits');
     Filament::setCurrentPanel(Filament::getPanel('demo'));
     $this->expectException(\Livewire\Features\SupportLockedProperties\CannotUpdateLockedPropertyException::class);
     \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Livewire\OwnCreditsIndicator::class)->set('contextSnapshot.2', 'forged-scope');

@@ -122,7 +122,7 @@ The plugin ships three native panel pages:
 
 AI starts enabled, with quotas and all abuse protections off. No business limits are supplied. Management changes require a reason of at most 500 characters and write an audit entry atomically. Disabling AI or blocking an actor prevents **new admissions**; already admitted generations retain their delivery rights and execution deadlines. Quotas off does not override availability, blocks or permissions, and enabling quotas never retroactively charges a free generation.
 
-Configure an explicit, scoped actor directory to manage users before their first generation. The plugin never infers a host User model, tenant column, display name or email. Return `ActorIdentity` with a human label in both search and resolve callbacks. The resolver remains required when embedding Manage AI in your own Resource with the built-in Users tab off.
+Configure an explicit, scoped actor directory to manage users before their first generation. The plugin never infers a host User model, tenant column, display name or email. Return `ActorIdentity` with a human label in both search and resolve callbacks. Without a directory the Users tab is hidden and its section cannot be opened; Settings shows managers a link to the setup guide. The resolver remains required when embedding Manage AI in your own Resource with the built-in Users tab off.
 
 Choose what appears on each panel instance:
 

@@ -37,6 +37,8 @@ class AiControlsPage extends Page implements HasTable
 
   protected static ?string $title = 'AI Writer controls';
   protected static ?string $slug = 'ai-writer-controls';
+
+  protected const DIRECTORY_DOCS_URL = 'https://github.com/pdro-lucas/filament-ai-writer/blob/main/docs/integration.md#panel-setup-and-a-scoped-actor-directory';
   protected string $view = 'filament-ai-writer::ai-controls';
 
   #[Locked]
@@ -402,6 +404,11 @@ class AiControlsPage extends Page implements HasTable
     $policy = $plugin->credits()->policy($context);
     $renewal = $policy['renews_at'] === null ? 'Manual renewal' : \Carbon\CarbonImmutable::parse($policy['renews_at'], 'UTC')->setTimezone(config('app.timezone'))->format('M j, Y · H:i T');
     return $schema->components([
+      Section::make('User directory')->aside()->compact()
+        ->description('Connect your application\'s users with actorDirectoryUsing() to manage individual users. Settings and Activity work without it.')
+        ->schema([Actions::make([Action::make('directoryDocs')->label('Set up the user directory')->link()
+          ->url(self::DIRECTORY_DOCS_URL, shouldOpenInNewTab: true)])->key('directoryActions')])
+        ->visible(!$plugin->hasActorDirectory() && $plugin->canManage()),
       Section::make('Availability')->aside()->compact()->description($enabled ? 'AI is enabled' : 'AI is disabled')
         ->schema([Actions::make([$enabled ? $this->disableAction() : $this->enableAction()])->key('availabilityActions')]),
       Section::make('Credits')->aside()->compact()->description('1 delivered generation = 1 credit. ' . ($policy['enabled'] ? 'Quotas on.' : 'Quotas off.'))

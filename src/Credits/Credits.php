@@ -257,6 +257,12 @@ final class Credits
     return $this->transition($context, 'recover', fn () => false);
   }
 
+  /** Internal indicator gate: one unlocked policy read; no balance, period or abuse table is touched. */
+  public function quotaEnabled(ControlContext $context): bool
+  {
+    return (bool) ($this->table('policies')->where('scope_key', $context->scopeKey())->value('quota_enabled') ?? false);
+  }
+
   public function policy(ControlContext $context): array
   {
     AiWriterPlugin::get()->controlsService()->authorize($context);
