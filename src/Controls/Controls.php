@@ -7,6 +7,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use PdroLucas\FilamentAiWriter\AiWriterPlugin;
 use PdroLucas\FilamentAiWriter\Exceptions\GenerationFailure;
+use PdroLucas\FilamentAiWriter\Support\FailureCause;
 use PdroLucas\FilamentAiWriter\Models\ControlAudit;
 use PdroLucas\FilamentAiWriter\Support\Reason;
 use Throwable;
@@ -62,16 +63,16 @@ final class Controls
   {
     try {
       $context = AiWriterPlugin::get()->controlContext();
-    } catch (Throwable) {
-      throw new GenerationFailure('controls');
+    } catch (Throwable $error) {
+      throw FailureCause::remember(new GenerationFailure('controls'), $error);
     }
     try {
       $this->assertAdmission($context);
       return $context;
     } catch (GenerationFailure $failure) {
       throw $failure;
-    } catch (Throwable) {
-      throw new GenerationFailure('storage');
+    } catch (Throwable $error) {
+      throw FailureCause::remember(new GenerationFailure('storage'), $error);
     }
   }
 

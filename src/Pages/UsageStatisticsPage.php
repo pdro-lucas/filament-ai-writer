@@ -47,9 +47,6 @@ class UsageStatisticsPage extends Page implements HasTable
   #[Locked]
   public string $panelId;
 
-  // Server-derived menu display state; actual dates remain authoritative.
-  public string $periodPreset = '7';
-
   protected array $actorLabels = [];
 
   public static function canAccess(): bool
@@ -134,7 +131,14 @@ class UsageStatisticsPage extends Page implements HasTable
           DatePicker::make('until')->label('Through')->native(false)->format('Y-m-d')->closeOnDateSelection()->live()
             ->afterStateUpdated(fn (Set $set) => $set('preset', 'custom'))
             ->default(fn (): string => CarbonImmutable::now(config('app.timezone'))->toDateString()),
-        ])->query(fn (Builder $query, array $data): Builder => $this->statistics()->filterPeriod($query, $data)),
+        ])->query(fn (Builder $query, array $data): Builder => $this->statistics()->filterPeriod($query, $data))
+          ->indicateUsing(function (array $data): ?string {
+            $from = $data['from'] ?? null;
+            $until = $data['until'] ?? null;
+            return filled($from) || filled($until)
+              ? __('From :from to :until', ['from' => substr((string) $from, 0, 10) ?: '…', 'until' => substr((string) $until, 0, 10) ?: '…'])
+              : null;
+          }),
         $this->metadataFilter('actor', 'User')
           ->query(fn (Builder $query, array $data): Builder => filled($data['value'] ?? null) ? $this->statistics()->filterActor($query, $data['value']) : $query),
         SelectFilter::make('status')->label('Result')->options(['delivered' => 'Success', 'failed' => 'Failure', 'active' => 'In progress'])
@@ -229,23 +233,11 @@ class UsageStatisticsPage extends Page implements HasTable
   protected function getViewData(): array
   {
     $filters = $this->widgetFilters();
-    $today = CarbonImmutable::now(config('app.timezone', 'UTC'));
-    $periodPreset = 'custom';
-    foreach ([1, 7, 30] as $days) {
-      if (($filters['period']['from'] ?? null) === $today->subDays($days - 1)->toDateString()
-        && ($filters['period']['until'] ?? null) === $today->toDateString()) {
-        $periodPreset = (string) $days;
-        break;
-      }
-    }
-    $this->periodPreset = $periodPreset;
+
     return [
-      'summary' => $this->statistics()->dashboard($filters),
       'widgetKey' => hash('sha256', json_encode($filters)),
       'filters' => $filters,
       'panel' => $this->panelId,
-      'timezone' => config('app.timezone', 'UTC'),
-      'periodPreset' => $periodPreset,
     ];
   }
 }

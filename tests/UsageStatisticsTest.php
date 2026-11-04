@@ -109,7 +109,6 @@ class UsageStatisticsTest extends TestCase
     $this->row('demo', ['status' => 'failed']);
     $page = \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\UsageStatisticsPage::class)->assertCountTableRecords(4);
     $this->assertSame(['from' => '2026-10-15', 'until' => '2026-10-21'], $page->instance()->getTableFilterState('period'));
-    $page->assertViewHas('periodPreset', '7');
     $page->filterTable('status', 'active')
       ->filterTable('actor', UsageStatistics::actorKey('HostActor', 'opaque-id'))->assertCountTableRecords(2);
     $service = AiWriterPlugin::get()->statistics();
@@ -117,19 +116,15 @@ class UsageStatisticsTest extends TestCase
     $this->assertSame(2, $summary['attempts']);
     $this->assertSame(2, array_sum(array_column($summary['charts']['time'], 'active')));
     $page->call('setPeriod', 1)->assertCountTableRecords(1);
-    $page->assertViewHas('periodPreset', '1');
     $this->assertSame(1, $service->dashboard($page->viewData('filters'))['attempts']);
     $page->call('setPeriod', 30)->assertCountTableRecords(2);
-    $page->assertViewHas('periodPreset', '30');
     // Match the JavaScript picker's internal state, not just preset date-only input.
     $page->filterTable('period', ['from' => '2026-10-15 00:00:00', 'until' => '2026-10-15 00:00:00'])->assertCountTableRecords(1);
-    $page->assertViewHas('periodPreset', 'custom');
     $this->assertSame(1, $service->dashboard($page->viewData('filters'))['attempts']);
     $page->call('resetUsageFilters')->assertCountTableRecords(4);
-    $page->assertViewHas('periodPreset', '7');
     $page->set('tableFilters.provider.value', 'PRIVATE-provider')
       ->set('tableFilters.model.value', 'PRIVATE-model')->assertCountTableRecords(4)
-      ->assertViewHas('summary', fn (array $summary): bool => $summary['attempts'] === 4);
+      ->assertViewHas('filters', fn (array $filters): bool => AiWriterPlugin::get()->statistics()->dashboard($filters)['attempts'] === 4);
     $page->assertViewHas('filters', fn (array $filters): bool => !isset($filters['provider'], $filters['model']));
     $this->assertSame(['from' => '2026-10-15', 'until' => '2026-10-21'], $page->instance()->getTableFilterState('period'));
   }
@@ -147,7 +142,7 @@ class UsageStatisticsTest extends TestCase
       ->assertOk()->assertSee('AI Writer usage')
       ->assertCountTableRecords(2)
       ->assertViewHas('filters', fn (array $filters): bool => $filters['period'] === ['from' => '2026-10-15', 'until' => '2026-10-15'])
-      ->assertViewHas('summary', fn (array $summary): bool => $summary['attempts'] === 2);
+      ->assertViewHas('filters', fn (array $filters): bool => AiWriterPlugin::get()->statistics()->dashboard($filters)['attempts'] === 2);
   }
 
   public function test_page_period_boundary_rejects_malformed_picker_state(): void
@@ -194,7 +189,10 @@ class UsageStatisticsTest extends TestCase
   public function test_chart_options_keep_no_motion_compatible_with_filament_initialization(): void
   {
     $this->login();
+    $this->row('demo', ['started_at' => \Carbon\CarbonImmutable::now('UTC')->toDateTimeString()]);
     $chart = \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Widgets\UsageCountChart::class, ['panelId' => 'demo']);
+    // The screen-reader table carries the same buckets as the bars.
+    $chart->assertSee('Request counts by date · 1-day buckets · UTC')->assertSeeHtml('<th scope="row">' . \Carbon\CarbonImmutable::now(config('app.timezone'))->format('Y-m-d') . '</th><td>1</td>');
     preg_match("/options:\\s*JSON\\.parse\\('([^']+)'\\)/", html_entity_decode($chart->html(), ENT_QUOTES), $matches);
     $this->assertNotEmpty($matches, 'The widget must send options to the Filament chart component.');
     $options = json_decode(json_decode('"' . $matches[1] . '"', true, 512, JSON_THROW_ON_ERROR), true, 512, JSON_THROW_ON_ERROR);

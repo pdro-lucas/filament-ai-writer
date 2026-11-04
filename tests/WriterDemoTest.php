@@ -368,6 +368,35 @@ class WriterDemoTest extends TestCase
     };
 
     $this->assertNotSame($generate(false), $generate(true));
+
+    // A provider bug is logged with its class and location only: its message may carry a key or a response body.
+    $this->app->bind(AiProvider::class, fn () => new class implements AiProvider {
+      public function generate(string $systemPrompt, string $userInput): GenerateResult
+      {
+        throw new \RuntimeException('PRIVATE key sk-secret');
+      }
+    });
+    $generate(false);
+    $this->assertMatchesRegularExpression('/^RuntimeException at .+:\d+$/', $logged[0]['cause']);
+    $this->assertArrayNotHasKey('exception', $logged[0]);
+    $this->assertStringNotContainsString('sk-secret', json_encode($logged[0]));
+
+    // A storage failure keeps its real cause and stack in the log, while the failure itself stays unchained.
+    $this->artisan('migrate:reset', ['--path' => realpath(__DIR__ . '/../database/migrations'), '--realpath' => true])->assertSuccessful();
+    $plugin->authorizeManage(true);
+    $logged = [];
+    try {
+      $plugin->generation()->run('prompt', 'input', fn () => null, fn () => null, 'content');
+      $this->fail('Missing tables must stop generation.');
+    } catch (\PdroLucas\FilamentAiWriter\Exceptions\GenerationFailure $failure) {
+      $this->assertNull($failure->getPrevious());
+      $this->assertSame('storage', $failure->failureCode);
+      \PdroLucas\FilamentAiWriter\Support\FailureNotice::send($failure);
+    }
+    $this->assertSame('storage', $logged[0]['failure_code']);
+    $this->assertStringStartsWith('Illuminate\Database\QueryException at ', $logged[0]['cause']);
+    $this->assertInstanceOf(\Throwable::class, $logged[0]['exception']);
+    $this->app->forgetInstance(AiProvider::class);
     // Without a registered plugin there is no manage permission to consult: the detail stays hidden.
     Filament::setCurrentPanel(Panel::make()->id('unregistered')->path('unregistered')->authGuard('workbench'));
     $logged = [];

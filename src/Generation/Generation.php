@@ -11,6 +11,7 @@ use PdroLucas\FilamentAiWriter\Data\GenerationContext;
 use PdroLucas\FilamentAiWriter\Usage\UsageRecorder;
 use PdroLucas\FilamentAiWriter\Usage\CostCalculator;
 use PdroLucas\FilamentAiWriter\Exceptions\GenerationFailure;
+use PdroLucas\FilamentAiWriter\Support\FailureCause;
 use Throwable;
 
 class Generation
@@ -56,12 +57,14 @@ class Generation
       return $result;
     } catch (GenerationFailure $failure) {
       if ($failure->result === null && $result !== null) {
+        $original = $failure;
         $failure = new GenerationFailure($failure->failureCode, $failure->httpStatus, $failure->requestId, $failure->responseId, $result->durationMs, $failure->outcomeUnknown, $result, $failure->renewsAt);
+        FailureCause::transfer($original, $failure);
       }
       $this->recorder->failed($context, $failure, $quote);
       throw $failure;
-    } catch (Throwable) {
-      $failure = new GenerationFailure('provider', outcomeUnknown: true);
+    } catch (Throwable $error) {
+      $failure = FailureCause::remember(new GenerationFailure('provider', outcomeUnknown: true), $error);
       $this->recorder->failed($context, $failure, $quote);
       throw $failure;
     }
@@ -74,8 +77,8 @@ class Generation
       $result = app(AiProvider::class)->generate($systemPrompt, $userInput);
     } catch (GenerationFailure $failure) {
       throw $failure;
-    } catch (Throwable) {
-      throw new GenerationFailure('provider', outcomeUnknown: true);
+    } catch (Throwable $error) {
+      throw FailureCause::remember(new GenerationFailure('provider', outcomeUnknown: true), $error);
     }
     if ($result->outcome !== GenerateResult::TEXT) {
       throw new GenerationFailure($result->outcome, requestId: $result->requestId, responseId: $result->responseId, durationMs: $result->durationMs, result: $result);

@@ -384,7 +384,7 @@ There is no polling or custom JavaScript. Direct service calls and other browser
 
 ## Customize presentation
 
-Every plugin screen is built only from Filament components and design tokens: sections, stats and chart widgets, tables, native filters, tabs and the dropdown. The views ship no `<style>`, no `.fi-*` overrides and no fixed font sizes or colors, and the package registers no CSS asset. Colors, radius, fonts and dark mode therefore come from your Filament theme, with nothing to override.
+Every plugin screen is built only from Filament components and design tokens: sections, stats and chart widgets, tables, native filters, tabs and the dropdown. The views ship no `<style>`, no `.fi-*` overrides and no fixed font sizes or colors, and the package registers no CSS asset. The one color the plugin sets in PHP is the writer button's `Color::Fuchsia`, the default inherited from 0.7.1; change it per action with `->color()`. Colors, radius, fonts and dark mode therefore come from your Filament theme, with nothing to override.
 
 **Metric widgets.** `UsageOverviewStats` (requests, tokens, costs, average duration) and `UsageCountChart` can be placed on any dashboard of a panel that has the plugin, next to your own widgets:
 
@@ -398,6 +398,8 @@ $panel->widgets([UsageOverviewStats::class, UsageCountChart::class]);
 Both appear only for people allowed by `authorizeViewStatistics()` and show the last seven days for the current panel; on the Statistics page they follow its filters. Reorder or resize them with the usual widget `$sort` and `$columnSpan`, or subclass them.
 
 **Icons.** Replace any icon with `FilamentIcon::register()` using these aliases: `filament-ai-writer::action` (the writer button), `filament-ai-writer::indicator` (credits indicator; `creditsIndicatorIcon()` still wins), `filament-ai-writer::indicator.link` (popover link) and `filament-ai-writer::field-help` (help buttons in the settings forms).
+
+Register icon overrides in a service provider's `boot()`, before any action is built: `AiWriterAction::make()` resolves its icon when it is created.
 
 **Public CSS hooks.** These are the only plugin-owned selectors you may rely on; they carry no styles of their own: the `data-ai-controls` attribute with the values `admin`, `settings`, `users`, `activity`, `own-credits` and `credits-indicator`, and the classes `ai-controls-directory`, `ai-controls-list`, `ai-controls-ledger`, `ai-controls-meta` and `ai-controls-status` (the last with `data-state="available|paused"`). Everything else is Filament markup and follows Filament's own stability promises.
 

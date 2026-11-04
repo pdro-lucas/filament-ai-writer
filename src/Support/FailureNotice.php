@@ -18,7 +18,7 @@ final class FailureNotice
 
     if ($failure->isTechnical()) {
       $reference = 'AIW-' . Str::upper(Str::random(8));
-      Log::error('AI Writer generation failed.', [
+      Log::error('AI Writer generation failed.', self::cause($failure) + [
         'reference' => $reference,
         'failure_code' => $failure->failureCode,
         'detail' => $failure->getMessage(),
@@ -33,6 +33,26 @@ final class FailureNotice
     }
 
     Notification::make()->warning()->title(__('AI generation was not delivered'))->body($body)->send();
+  }
+
+  /**
+   * Where the failure really came from. Storage, controls and transaction causes are ours, so the exception travels with its stack.
+   * A provider cause can carry a response body or a key in its message: only its class and location are logged.
+   *
+   * @return array<string, mixed>
+   */
+  private static function cause(GenerationFailure $failure): array
+  {
+    $cause = FailureCause::of($failure);
+    if ($cause === null) {
+      return [];
+    }
+    $context = ['cause' => $cause::class . ' at ' . $cause->getFile() . ':' . $cause->getLine()];
+    if (in_array($failure->failureCode, ['storage', 'controls', 'transaction'], true)) {
+      $context['exception'] = $cause;
+    }
+
+    return $context;
   }
 
   /** Without a registered plugin there is no manage permission to consult, so the detail stays hidden. */

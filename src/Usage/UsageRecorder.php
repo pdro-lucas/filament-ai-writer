@@ -8,6 +8,7 @@ use Illuminate\Database\Query\Builder;
 use PdroLucas\FilamentAiWriter\Data\GenerateResult;
 use PdroLucas\FilamentAiWriter\Data\GenerationContext;
 use PdroLucas\FilamentAiWriter\Exceptions\GenerationFailure;
+use PdroLucas\FilamentAiWriter\Support\FailureCause;
 use PdroLucas\FilamentAiWriter\Models\UsageAttempt;
 use PdroLucas\FilamentAiWriter\Support\ProviderResponse;
 use Throwable;
@@ -50,7 +51,7 @@ class UsageRecorder
       if ($error instanceof GenerationFailure && $error->failureCode === 'expired') {
         $this->lateMetadata($context, [...$this->metadata($quote), 'outcome_unknown' => false]);
       }
-      throw $error instanceof GenerationFailure ? $error : new GenerationFailure('storage');
+      throw $error instanceof GenerationFailure ? $error : FailureCause::remember(new GenerationFailure('storage'), $error);
     }
   }
 
@@ -91,7 +92,7 @@ class UsageRecorder
           throw new GenerationFailure('delivery', result: $result);
         }
       }
-      throw $error instanceof GenerationFailure ? $error : new GenerationFailure('storage', result: $result);
+      throw $error instanceof GenerationFailure ? $error : FailureCause::remember(new GenerationFailure('storage', result: $result), $error);
     }
   }
 
@@ -126,7 +127,7 @@ class UsageRecorder
       ]);
       return $accepted;
     } catch (Throwable $error) {
-      throw $error instanceof GenerationFailure ? $error : new GenerationFailure('storage');
+      throw $error instanceof GenerationFailure ? $error : FailureCause::remember(new GenerationFailure('storage'), $error);
     }
   }
 
@@ -144,8 +145,8 @@ class UsageRecorder
       $this->scoped($context)->where('status', 'failed')->where('failure_code', 'expired')->whereNull('received_at')->update([
         ...$metadata, 'received_at' => CarbonImmutable::now('UTC'),
       ]);
-    } catch (Throwable) {
-      throw new GenerationFailure('storage');
+    } catch (Throwable $error) {
+      throw FailureCause::remember(new GenerationFailure('storage'), $error);
     }
   }
 
@@ -157,8 +158,8 @@ class UsageRecorder
         throw new GenerationFailure('storage');
       }
       return $credits;
-    } catch (Throwable) {
-      throw new GenerationFailure('storage');
+    } catch (Throwable $error) {
+      throw FailureCause::remember(new GenerationFailure('storage'), $error);
     }
   }
 

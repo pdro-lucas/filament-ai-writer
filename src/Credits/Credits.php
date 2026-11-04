@@ -15,6 +15,7 @@ use PdroLucas\FilamentAiWriter\Controls\ActorIdentity;
 use PdroLucas\FilamentAiWriter\Controls\ControlContext;
 use PdroLucas\FilamentAiWriter\Data\GenerationContext;
 use PdroLucas\FilamentAiWriter\Exceptions\GenerationFailure;
+use PdroLucas\FilamentAiWriter\Support\FailureCause;
 use PdroLucas\FilamentAiWriter\Models\ControlAudit;
 use PdroLucas\FilamentAiWriter\Models\UsageAttempt;
 use Throwable;
@@ -103,7 +104,7 @@ final class Credits
     } catch (UniqueConstraintViolationException) {
       throw new GenerationFailure('duplicate');
     } catch (Throwable $error) {
-      throw $error instanceof GenerationFailure ? $error : new GenerationFailure('storage');
+      throw $error instanceof GenerationFailure ? $error : FailureCause::remember(new GenerationFailure('storage'), $error);
     }
   }
 

@@ -3,6 +3,8 @@
 namespace PdroLucas\FilamentAiWriter\Widgets;
 
 use Filament\Widgets\ChartWidget;
+use Illuminate\Contracts\Support\Htmlable;
+use Illuminate\Contracts\View\View;
 use PdroLucas\FilamentAiWriter\Widgets\Concerns\ReadsUsageStatistics;
 
 class UsageCountChart extends ChartWidget
@@ -23,6 +25,16 @@ class UsageCountChart extends ChartWidget
   {
     $this->authorizeContext();
     return $this->usageSummary()['charts'];
+  }
+
+  /** Screen-reader table with the same numbers as the bars; Filament renders it visually hidden. */
+  public function getChartAssistiveContent(): string | View | Htmlable | null
+  {
+    $charts = $this->chartRows();
+
+    return view('filament-ai-writer::usage-chart-data', [
+      'rows' => $charts['time'], 'bucketDays' => $charts['bucket_days'], 'timezone' => config('app.timezone', 'UTC'),
+    ]);
   }
 
   protected function getCachedData(): array
