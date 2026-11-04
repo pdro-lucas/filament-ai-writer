@@ -15,6 +15,7 @@ use PdroLucas\FilamentAiWriter\AiWriterPlugin;
 use PdroLucas\FilamentAiWriter\Data\GenerateResult;
 use PdroLucas\FilamentAiWriter\Exceptions\GenerationFailure;
 use PdroLucas\FilamentAiWriter\Generation\Generation;
+use PdroLucas\FilamentAiWriter\Support\FailureNotice;
 use PdroLucas\FilamentAiWriter\Events\AiTextGenerated;
 
 class AiWriterAction extends Action
@@ -206,7 +207,7 @@ class AiWriterAction extends Action
             $this->generateAndDeliver($this->buildPromptWithControls($this->aiPrompt, $data), $data["ai_input"], $get, $set);
           }
         } catch (GenerationFailure $failure) {
-          Notification::make()->warning()->title("AI generation was not delivered")->body($failure->getMessage())->send();
+          FailureNotice::send($failure);
         }
       });
   }

@@ -80,8 +80,9 @@ final class Credits
           if ((bool) $policy->quota_enabled) {
             $this->validPolicy($policy);
             $balance = $this->currentBalance($policy, $context->actor);
-            if ($this->snapshot($policy, $context->actor, $balance)['available'] < 1) {
-              throw new GenerationFailure('credits');
+            $snapshot = $this->snapshot($policy, $context->actor, $balance);
+            if ($snapshot['available'] < 1) {
+              throw new GenerationFailure('credits', renewsAt: $snapshot['renews_at'] === null ? null : CarbonImmutable::parse($snapshot['renews_at'], 'UTC'));
             }
             $this->table('credit_balances')->where('id', $balance->id)->increment('reserved');
           }

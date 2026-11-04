@@ -791,7 +791,18 @@ class AiControlsTest extends TestCase
       $this->fail('Must deny exhausted quota');
     } catch (GenerationFailure $failure) {
       $this->assertSame('credits', $failure->failureCode);
+      $this->assertFalse($failure->isTechnical());
+      $this->assertSame('Your AI credits are exhausted. Contact your administrator.', $failure->detail());
     }
+    $credits->configure($context, true, 1, 'daily', 'Daily quota');
+    try {
+      $plugin->generation()->run('prompt', 'input', fn () => $this->fail('Exhausted'), fn () => null, 'content');
+      $this->fail('Must deny exhausted quota');
+    } catch (GenerationFailure $failure) {
+      $renewal = \Carbon\CarbonImmutable::parse($credits->ownBalance($context)['renews_at'], 'UTC')->setTimezone(config('app.timezone'))->format('M j, Y · H:i T');
+      $this->assertSame("Your AI credits are exhausted. They renew on {$renewal}.", $failure->detail());
+    }
+    $credits->configure($context, true, 1, 'manual', 'Start quota');
     Http::assertSentCount(1);
     $credits->configure($context, false, 3, 'manual', 'Pause quota');
     $plugin->generation()->run('prompt', 'input', fn () => null, fn () => null, 'content');

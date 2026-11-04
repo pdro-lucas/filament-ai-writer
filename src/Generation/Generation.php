@@ -56,7 +56,7 @@ class Generation
       return $result;
     } catch (GenerationFailure $failure) {
       if ($failure->result === null && $result !== null) {
-        $failure = new GenerationFailure($failure->failureCode, $failure->httpStatus, $failure->requestId, $failure->responseId, $result->durationMs, $failure->outcomeUnknown, $result);
+        $failure = new GenerationFailure($failure->failureCode, $failure->httpStatus, $failure->requestId, $failure->responseId, $result->durationMs, $failure->outcomeUnknown, $result, $failure->renewsAt);
       }
       $this->recorder->failed($context, $failure, $quote);
       throw $failure;

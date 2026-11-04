@@ -342,6 +342,40 @@ class WriterDemoTest extends TestCase
     Http::assertSentCount(1);
   }
 
+  public function test_technical_failures_reach_only_managers_in_full_and_everyone_else_as_a_reference(): void
+  {
+    $this->signIn();
+    $plugin = AiWriterPlugin::get();
+    Http::fake(['https://api.openai.com/v1/chat/completions' => Http::response(['error' => ['message' => 'PRIVATE upstream detail']], 500)]);
+    $logged = [];
+    \Illuminate\Support\Facades\Event::listen(\Illuminate\Log\Events\MessageLogged::class, function ($event) use (&$logged): void {
+      if ($event->message === 'AI Writer generation failed.') {
+        $logged[] = $event->context;
+      }
+    });
+    $generate = function (bool $manager) use ($plugin, &$logged): string {
+      $plugin->authorizeManage($manager);
+      $logged = [];
+      $page = Livewire::test(WriterDemo::class)->callAction(TestAction::make('ai_writer')->schemaComponent('content', 'form'));
+      $this->assertCount(1, $logged);
+      $this->assertSame('provider', $logged[0]['failure_code']);
+      $reference = $logged[0]['reference'];
+      $body = $manager
+        ? "The provider could not complete the request. (Reference: {$reference})"
+        : "AI is unavailable right now. Try again later or contact your administrator and mention reference {$reference}.";
+      $page->assertNotified(Notification::make()->warning()->title('AI generation was not delivered')->body($body));
+      return $reference;
+    };
+
+    $this->assertNotSame($generate(false), $generate(true));
+    // Without a registered plugin there is no manage permission to consult: the detail stays hidden.
+    Filament::setCurrentPanel(Panel::make()->id('unregistered')->path('unregistered')->authGuard('workbench'));
+    $logged = [];
+    $page = Livewire::test(WriterDemo::class)->callAction(TestAction::make('ai_writer')->schemaComponent('content', 'form'));
+    $page->assertNotified(Notification::make()->warning()->title('AI generation was not delivered')
+      ->body("AI is unavailable right now. Try again later or contact your administrator and mention reference {$logged[0]['reference']}."));
+  }
+
   public function test_notification_mailbox_survives_independent_workbench_requests(): void
   {
     $this->signIn();

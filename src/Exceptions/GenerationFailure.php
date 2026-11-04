@@ -2,6 +2,7 @@
 
 namespace PdroLucas\FilamentAiWriter\Exceptions;
 
+use Carbon\CarbonInterface;
 use PdroLucas\FilamentAiWriter\Data\GenerateResult;
 use RuntimeException;
 
@@ -33,6 +34,9 @@ final class GenerationFailure extends RuntimeException
     'delivery' => 'The generated result could not be applied to the form.',
   ];
 
+  /** Denials and rejected output the person can act on. Every other code is a technical failure kept out of their sight. */
+  public const SPECIFIC = ['disabled', 'expired', 'rate', 'concurrency', 'failure_pause', 'credits', 'blocked', 'duplicate', 'empty', 'refused', 'incomplete', 'invalid_output', 'delivery'];
+
   public readonly string $failureCode;
   public readonly ?GenerateResult $result;
 
@@ -44,9 +48,27 @@ final class GenerationFailure extends RuntimeException
     public readonly int $durationMs = 0,
     public readonly bool $outcomeUnknown = false,
     ?GenerateResult $result = null,
+    public readonly ?CarbonInterface $renewsAt = null,
   ) {
     $this->result = $result?->withoutText();
     $this->failureCode = array_key_exists($failureCode, self::MESSAGES) ? $failureCode : 'provider';
     parent::__construct(self::MESSAGES[$this->failureCode]);
+  }
+
+  public function isTechnical(): bool
+  {
+    return !in_array($this->failureCode, self::SPECIFIC, true);
+  }
+
+  /** Full, translated explanation: shown as is for actionable denials and only to managers for technical failures. */
+  public function detail(): string
+  {
+    if ($this->failureCode === 'credits' && $this->renewsAt !== null) {
+      return __('Your AI credits are exhausted. They renew on :date.', [
+        'date' => $this->renewsAt->setTimezone(config('app.timezone'))->format('M j, Y · H:i T'),
+      ]);
+    }
+
+    return __(self::MESSAGES[$this->failureCode]);
   }
 }
