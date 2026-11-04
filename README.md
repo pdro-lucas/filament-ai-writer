@@ -1,6 +1,6 @@
 # filament-ai-writer
 
-https://github.com/user-attachments/assets/05b8f24e-e01e-4acc-836a-32acda143b42
+![Filament AI Writer: AI text in any form field, with credits, limits and usage you control](art/cover.png)
 
 
 A Filament plugin for AI-assisted writing, with per-panel registration, host-defined permissions and a shared generation service. Its form action integrates OpenAI, Anthropic, Gemini and OpenRouter with scalar and array fields. Supported endpoints do not imply support for every model or optional API feature.
