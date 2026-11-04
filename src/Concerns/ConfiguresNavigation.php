@@ -11,7 +11,8 @@ use UnitEnum;
  * Navigation of the plugin pages. Each page has its own prefixed setters (`controlsNavigationGroup()`, `statisticsSlug()`,
  * `creditsCluster()` ...) and group, icon, sort, cluster and menu visibility also have a plugin-wide default
  * (`navigationGroup()`, `cluster()`, `navigation()` ...) that every page falls back to. A page value wins over the default.
- * Values are plain or Closures evaluated on use with `$panel`; null clears a value.
+ * Values are plain or Closures evaluated on use with `$panel`; null clears a value. A group of `false` means no group at all
+ * (without it, pages outside a cluster share the built-in "AI Writer" group).
  */
 trait ConfiguresNavigation
 {
@@ -32,12 +33,12 @@ trait ConfiguresNavigation
   }
 
   /** Plugin-wide default for every page. */
-  public function navigationGroup(string|UnitEnum|Closure|null $value): static
+  public function navigationGroup(string|UnitEnum|Closure|false|null $value): static
   {
     return $this->setNavigationOption('*', 'group', $value);
   }
 
-  public function getNavigationGroup(): mixed
+  public function getNavigationGroup(): string|UnitEnum|false|null
   {
     return $this->getNavigationOption('*', 'group');
   }
@@ -48,7 +49,7 @@ trait ConfiguresNavigation
     return $this->setNavigationOption('*', 'icon', $value);
   }
 
-  public function getNavigationIcon(): mixed
+  public function getNavigationIcon(): string|BackedEnum|null
   {
     return $this->getNavigationOption('*', 'icon');
   }
@@ -86,12 +87,12 @@ trait ConfiguresNavigation
     return $this->getNavigationOption('*', 'navigation');
   }
 
-  public function statisticsNavigationGroup(string|UnitEnum|Closure|null $value): static
+  public function statisticsNavigationGroup(string|UnitEnum|Closure|false|null $value): static
   {
     return $this->setNavigationOption('statistics', 'group', $value);
   }
 
-  public function getStatisticsNavigationGroup(): mixed
+  public function getStatisticsNavigationGroup(): string|UnitEnum|false|null
   {
     return $this->getNavigationOption('statistics', 'group');
   }
@@ -111,7 +112,7 @@ trait ConfiguresNavigation
     return $this->setNavigationOption('statistics', 'icon', $value);
   }
 
-  public function getStatisticsNavigationIcon(): mixed
+  public function getStatisticsNavigationIcon(): string|BackedEnum|null
   {
     return $this->getNavigationOption('statistics', 'icon');
   }
@@ -156,12 +157,12 @@ trait ConfiguresNavigation
     return $this->getNavigationOption('statistics', 'navigation');
   }
 
-  public function controlsNavigationGroup(string|UnitEnum|Closure|null $value): static
+  public function controlsNavigationGroup(string|UnitEnum|Closure|false|null $value): static
   {
     return $this->setNavigationOption('controls', 'group', $value);
   }
 
-  public function getControlsNavigationGroup(): mixed
+  public function getControlsNavigationGroup(): string|UnitEnum|false|null
   {
     return $this->getNavigationOption('controls', 'group');
   }
@@ -181,7 +182,7 @@ trait ConfiguresNavigation
     return $this->setNavigationOption('controls', 'icon', $value);
   }
 
-  public function getControlsNavigationIcon(): mixed
+  public function getControlsNavigationIcon(): string|BackedEnum|null
   {
     return $this->getNavigationOption('controls', 'icon');
   }
@@ -226,12 +227,12 @@ trait ConfiguresNavigation
     return $this->getNavigationOption('controls', 'navigation');
   }
 
-  public function creditsNavigationGroup(string|UnitEnum|Closure|null $value): static
+  public function creditsNavigationGroup(string|UnitEnum|Closure|false|null $value): static
   {
     return $this->setNavigationOption('credits', 'group', $value);
   }
 
-  public function getCreditsNavigationGroup(): mixed
+  public function getCreditsNavigationGroup(): string|UnitEnum|false|null
   {
     return $this->getNavigationOption('credits', 'group');
   }
@@ -251,7 +252,7 @@ trait ConfiguresNavigation
     return $this->setNavigationOption('credits', 'icon', $value);
   }
 
-  public function getCreditsNavigationIcon(): mixed
+  public function getCreditsNavigationIcon(): string|BackedEnum|null
   {
     return $this->getNavigationOption('credits', 'icon');
   }

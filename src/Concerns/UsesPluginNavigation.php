@@ -50,7 +50,13 @@ trait UsesPluginNavigation
 
   public static function getNavigationGroup(): string|UnitEnum|null
   {
-    return static::pluginNavigation('group') ?? parent::getNavigationGroup() ?? __('AI Writer');
+    $group = static::pluginNavigation('group');
+    if ($group === false) {
+      return null;
+    }
+
+    // The built-in group is a default for loose pages only; a cluster already is their parent.
+    return $group ?? parent::getNavigationGroup() ?? (filled(static::getCluster()) ? null : __('AI Writer'));
   }
 
   public static function getNavigationLabel(): string|Htmlable

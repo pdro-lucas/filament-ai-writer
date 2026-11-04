@@ -8,11 +8,14 @@ use Filament\View\PanelsRenderHook;
 use Illuminate\Foundation\Testing\DatabaseMigrations;
 use Illuminate\Support\Facades\Route;
 use InvalidArgumentException;
+use ReflectionClass;
 use Orchestra\Testbench\Attributes\DefineEnvironment;
 use PdroLucas\FilamentAiWriter\AiWriterPlugin;
 use PdroLucas\FilamentAiWriter\Pages\AiControlsPage;
 use PdroLucas\FilamentAiWriter\Pages\MyAiCreditsPage;
 use PdroLucas\FilamentAiWriter\Pages\UsageStatisticsPage;
+use PdroLucas\FilamentAiWriter\Tests\Fixtures\AbstractStatisticsPage;
+use PdroLucas\FilamentAiWriter\Tests\Fixtures\ClusteredCreditsPage;
 use PdroLucas\FilamentAiWriter\Tests\Fixtures\HostStatisticsPage;
 use PdroLucas\FilamentAiWriter\Tests\Fixtures\NavigationCluster;
 use PdroLucas\FilamentAiWriter\Tests\Fixtures\NavigationPanelProvider;
@@ -32,15 +35,18 @@ class PluginNavigationTest extends TestCase
       'sort' => $class::getNavigationSort(), 'cluster' => $class::getCluster(), 'visible' => $class::shouldRegisterNavigation(),
     ];
 
-    $this->assertSame(['group' => 'Host tools', 'label' => 'Usage', 'icon' => 'heroicon-o-chart-bar', 'sort' => 7, 'cluster' => null, 'visible' => true], $nav(UsageStatisticsPage::class));
-    // Controls inherits the plugin default; the credits page overrides it.
-    $this->assertSame(['group' => 'Host tools', 'label' => 'AI Writer controls', 'icon' => 'heroicon-o-cog', 'sort' => null, 'cluster' => null, 'visible' => true], $nav(AiControlsPage::class));
-    $this->assertSame(['group' => 'Own group', 'label' => 'My AI credits', 'icon' => 'heroicon-o-cog', 'sort' => null, 'cluster' => NavigationCluster::class, 'visible' => false], $nav(MyAiCreditsPage::class));
+    $this->assertSame(['group' => null, 'label' => 'Usage', 'icon' => 'heroicon-o-chart-bar', 'sort' => 7, 'cluster' => null, 'visible' => true], $nav(UsageStatisticsPage::class));
+    // Controls overrides the plugin default group; statistics opts out of any group (false); credits sits in a cluster and inherits the plugin-wide group.
+    $this->assertSame(['group' => 'Own group', 'label' => 'AI Writer controls', 'icon' => 'heroicon-o-cog', 'sort' => null, 'cluster' => null, 'visible' => true], $nav(AiControlsPage::class));
+    $this->assertSame(['group' => 'Host tools', 'label' => 'My AI credits', 'icon' => 'heroicon-o-cog', 'sort' => null, 'cluster' => NavigationCluster::class, 'visible' => false], $nav(MyAiCreditsPage::class));
     $this->assertSame('/nav/host-cluster/credits-here', parse_url(MyAiCreditsPage::getUrl(panel: 'nav'), PHP_URL_PATH));
     $this->assertSame('/nav/stats', parse_url(UsageStatisticsPage::getUrl(panel: 'nav'), PHP_URL_PATH));
 
+    // The plugin-wide default applies to a page with no value of its own, and Closures are read on every use.
+    $plugin = AiWriterPlugin::get();
+    $this->assertSame('Host tools', $plugin->getNavigationGroup());
     config(['ai-writer-test.group' => 'Changed on the next request']);
-    $this->assertSame('Changed on the next request', UsageStatisticsPage::getNavigationGroup());
+    $this->assertSame('Changed on the next request', $plugin->getNavigationGroup());
     $this->get('/nav/stats')->assertOk();
     $this->get('/nav/host-cluster/credits-here')->assertOk();
   }
@@ -50,6 +56,8 @@ class PluginNavigationTest extends TestCase
   {
     $this->signIn();
     $this->assertSame('AI Writer', UsageStatisticsPage::getNavigationGroup());
+    // The built-in group is for loose pages: a page in a cluster (here from a subclass) gets none.
+    $this->assertNull(ClusteredCreditsPage::getNavigationGroup());
     $this->assertSame('ai-writer-usage', UsageStatisticsPage::getSlug(Filament::getPanel('nav')));
     $this->assertNull(AiWriterPlugin::get()->getCreditsPage());
     $this->get('/nav/my-ai-credits')->assertNotFound();
@@ -86,7 +94,7 @@ class PluginNavigationTest extends TestCase
         }
       }
     }
-    $abstract = new \ReflectionClass(\PdroLucas\FilamentAiWriter\Tests\Fixtures\AbstractStatisticsPage::class);
+    $abstract = new ReflectionClass(AbstractStatisticsPage::class);
     $this->assertTrue($abstract->isAbstract());
     $this->expectException(InvalidArgumentException::class);
     AiWriterPlugin::make()->statisticsPage($abstract->getName());
@@ -114,8 +122,8 @@ class PluginNavigationTest extends TestCase
   {
     $this->panel($app, function (AiWriterPlugin $plugin): void {
       $plugin->navigationGroup(fn (): string => config('ai-writer-test.group', 'Host tools'))->navigationIcon('heroicon-o-cog')
-        ->statisticsNavigationLabel('Usage')->statisticsNavigationIcon('heroicon-o-chart-bar')->statisticsNavigationSort(7)->statisticsSlug('stats')
-        ->creditsPage()->creditsNavigationGroup('Own group')->creditsCluster(NavigationCluster::class)->creditsSlug('credits-here')->creditsNavigation(false);
+        ->statisticsNavigationGroup(false)->controlsNavigationGroup('Own group')->statisticsNavigationLabel('Usage')->statisticsNavigationIcon('heroicon-o-chart-bar')->statisticsNavigationSort(7)->statisticsSlug('stats')
+        ->creditsPage()->creditsCluster(NavigationCluster::class)->creditsSlug('credits-here')->creditsNavigation(false);
     });
   }
 

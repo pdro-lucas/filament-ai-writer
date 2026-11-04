@@ -159,7 +159,8 @@ The host owns those rules; the plugin rechecks the configured callbacks on the s
 | --- | --- | --- |
 | Use your existing User Resource | `usersTab(false)` | Hides the built-in Users task and rejects forged requests to it; Settings/Activity and scoped management APIs remain |
 | Remove the topbar indicator | `creditsIndicator(false)` | Hides that instance's indicator; the personal page and enforcement remain |
-| Hide controls/personal navigation | Concrete page subclasses below | Removes navigation entries; routes and inherited authorization remain |
+| Hide a page from the menu | `controlsNavigation(false)`, `creditsNavigation(false)`, `statisticsNavigation(false)` | Removes the navigation entry; the route and authorization remain |
+| Remove a page and its route | `statisticsPage(false)`, `controlsPage(false)` (`creditsPage()` is already off by default) | No page, no route (404); permissions and services behind it are unchanged |
 | Deny AI use | `authorizeUseAi(fn (): bool => false)` | Denies new writer requests and own-credit surfaces; registration, storage and ledger remain required |
 | Deny statistics | `authorizeViewStatistics(fn (): bool => false)` | Denies the statistics route and later reads, independently of use/manage |
 | Deny administration | `authorizeManage(fn (): bool => false)` | Denies controls and management actions/reads/writes, independently of use/statistics |
@@ -169,7 +170,7 @@ The host owns those rules; the plugin rechecks the configured callbacks on the s
 | Turn protections off | `abuse()->configure()` with individual flags `false` | Each protection is independent of availability, permissions and quotas |
 | Keep all usage history | Leave `retention.days` unset/`null` and do not prune | Retention is opt-in; no scheduler is installed |
 
-The presentation setters are per instance and should be configured before registration. There are no plugin setters to unregister individual pages or run generation without its ledger/tables. Hiding navigation, Users or the topbar does not disable enforcement. Revoked use permission prevents new requests; it does not cancel an operation admitted earlier.
+The presentation setters are per instance and should be configured before registration. Individual pages can be removed with `statisticsPage(false)` and `controlsPage(false)`, and `creditsPage()` is off until you call it; there is no setter to run generation without its ledger and tables. Hiding navigation, Users or the credits indicator, or removing a page, does not disable enforcement. Revoked use permission prevents new requests; it does not cancel an operation admitted earlier.
 
 Navigation, page replacement and the credits indicator are configured on the plugin, with no subclass needed:
 
@@ -186,9 +187,9 @@ AiWriterPlugin::make()
     ->creditsIndicator(false);
 ```
 
-`statisticsPage()`, `controlsPage()` and `creditsPage()` accept `true`, `false` (no page, no route), a concrete subclass of the built-in page, or a `Closure` returning one of them, resolved when the panel registers. Passing an abstract or unrelated class throws an `InvalidArgumentException`. When you pass a subclass, do not also register it through page discovery. Pages keep their routes and inherited access checks when only hidden from the menu (`controlsNavigation(false)`). My AI credits has no route until `creditsPage()` is called; the indicator popover covers the common case. See the README for the full per-page setter list.
+`statisticsPage()`, `controlsPage()` and `creditsPage()` accept `true`, `false` (no page, no route), a concrete subclass of the built-in page, or a `Closure` returning one of them, resolved when the panel registers. A cluster passed to `cluster()` or a page's `…Cluster()` must be registered or discovered on the panel by the host (for example with `discoverClusters()`), as for any Filament page; otherwise the page cannot render. Passing an abstract or unrelated class throws an `InvalidArgumentException`. When you pass a subclass, do not also register it through page discovery. Pages keep their routes and inherited access checks when only hidden from the menu (`controlsNavigation(false)`). My AI credits has no route until `creditsPage()` is called; the indicator popover covers the common case. See the README for the full per-page setter list.
 
-For a panel where no AI feature should be accessible, set all three authorization callbacks to `false`; optionally also turn off the topbar. To keep generation but remove administration and reporting, leave use permission configured and deny only management/statistics. Permission changes do not erase history or bypass migration requirements.
+For a panel where no AI feature should be accessible, set all three authorization callbacks to `false`; optionally also turn off the credits indicator with `creditsIndicator(false)`, and remove the pages with `statisticsPage(false)` and `controlsPage(false)`. To keep generation but remove administration and reporting, leave use permission configured and deny only management/statistics. Permission changes do not erase history or bypass migration requirements.
 
 ## Manage AI in your own surfaces
 
@@ -324,7 +325,7 @@ Interactive controls can be hidden individually with `withToneControl(false)`, `
 
 ## Show personal credit status
 
-The built-in My AI credits page and topbar indicator use **target-free** APIs. They need `canUseAi()`, not management/statistics or a user directory. A host can embed the same native status schema in a personal page by extending `MyAiCreditsPage`, which retains mount/hydrate context checks:
+The built-in My AI credits page and credits indicator use **target-free** APIs. They need `canUseAi()`, not management/statistics or a user directory. A host can embed the same native status schema in a personal page by extending `MyAiCreditsPage`, which retains mount/hydrate context checks:
 
 ```php
 namespace App\Filament\Pages;
