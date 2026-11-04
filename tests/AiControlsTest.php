@@ -151,6 +151,11 @@ class AiControlsTest extends TestCase
     $this->assertFalse($plugin->isReasonRequired('availability'));
     $this->assertTrue($plugin->isReasonRequired('quota_reset'));
     $this->assertSame(['demo', 'block'], $seen[0]);
+    // The getter is symmetric: with an action it asks the Closure about that action, without one the Closure sees null.
+    $this->assertTrue($plugin->getRequireReason('block'));
+    $this->assertNull($plugin->getRequireReason('availability'));
+    $plugin->requireReason(fn (?string $action): bool => $action === null);
+    $this->assertTrue($plugin->getRequireReason());
   }
 
   public function test_pausing_ai_is_one_click_and_blocking_needs_a_reason_and_a_dialog_by_default(): void
@@ -386,12 +391,14 @@ class AiControlsTest extends TestCase
     $controls = \PdroLucas\FilamentAiWriter\Pages\AiControlsPage::class;
     \Livewire\Livewire::withQueryParams(['section' => 'users'])->test($controls)->assertSet('section', 'users');
     \Livewire\Livewire::withQueryParams(['section' => 'activity'])->test($controls)->assertSet('section', 'activity');
-    \Livewire\Livewire::withQueryParams(['section' => 'bogus'])->test($controls)->assertSet('section', 'settings');
+    // An invalid ?section= is replaced by a redirect to the section actually shown, so no misleading link stays.
+    \Livewire\Livewire::withQueryParams(['section' => 'bogus'])->test($controls)->assertRedirect('/demo/ai-writer-controls?section=settings');
     // A subclass changes the list and order; a removed section cannot be opened through the URL or by forging the property.
     $reordered = \PdroLucas\FilamentAiWriter\Tests\Fixtures\ReorderedControlsPage::class;
-    \Livewire\Livewire::test($reordered)->assertSet('section', 'activity')->assertDontSee('showSection(\'users\')', false);
-    \Livewire\Livewire::withQueryParams(['section' => 'users'])->test($reordered)->assertSet('section', 'activity');
-    \Livewire\Livewire::test($reordered)->set('section', 'users')->assertForbidden();
+    \Livewire\Livewire::withQueryParams([])->test($reordered)->assertSet('section', 'activity')->assertDontSee('showSection(\'users\')', false);
+    // An invalid ?section= is replaced by a redirect to the section actually shown, so no misleading link stays.
+    \Livewire\Livewire::withQueryParams(['section' => 'users'])->test($reordered)->assertRedirect('/demo/ai-writer-controls?section=activity');
+    \Livewire\Livewire::withQueryParams([])->test($reordered)->set('section', 'users')->assertForbidden();
     $plugin->usersTab(false);
     $page = \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\AiControlsPage::class)->assertDontSee('wire:click="showSection(\'users\')"', false)
       ->call('showSection', 'activity')->assertCountTableRecords(12);
@@ -399,9 +406,10 @@ class AiControlsTest extends TestCase
     \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\AiControlsPage::class)
       ->mountAction(TestAction::make('manageAiUser')->table('forged'))->assertActionNotMounted();
     // The section is URL-bound, so it is not locked: every client-side change is re-authorized on the server.
-    \Livewire\Livewire::withQueryParams(['section' => 'users'])->test($controls)->assertSet('section', 'settings');
-    \Livewire\Livewire::test($controls)->set('section', 'users')->assertForbidden();
-    \Livewire\Livewire::test($controls)->set('section', 'bogus')->assertForbidden();
+    // An invalid ?section= is replaced by a redirect to the section actually shown, so no misleading link stays.
+    \Livewire\Livewire::withQueryParams(['section' => 'users'])->test($controls)->assertRedirect('/demo/ai-writer-controls?section=settings');
+    \Livewire\Livewire::withQueryParams([])->test($controls)->set('section', 'users')->assertForbidden();
+    \Livewire\Livewire::withQueryParams([])->test($controls)->set('section', 'bogus')->assertForbidden();
   }
 
   public function test_host_action_authenticates_child_purpose_component_and_frozen_context(): void

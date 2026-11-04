@@ -23,6 +23,8 @@ use Filament\Tables\Concerns\InteractsWithTable;
 use Filament\Tables\Contracts\HasTable;
 use Filament\Tables\Table;
 use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Http\Exceptions\HttpResponseException;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Validation\ValidationException;
 use Livewire\Attributes\Locked;
@@ -105,9 +107,15 @@ class AiControlsPage extends Page implements HasTable
   public function mount(): void
   {
     abort_unless(static::canAccess(), 403);
-    // A URL value that is unknown, removed or not allowed falls back to the default section.
-    if (!array_key_exists($this->section, $this->availableSections())) {
+    // No section in the URL opens the first one; a value that is unknown, removed or not allowed falls back to it too.
+    $requested = request()->has('section');
+    $corrected = $requested && !array_key_exists($this->section, $this->availableSections());
+    if (!$requested || $corrected) {
       $this->section = $this->defaultSection();
+    }
+    if ($corrected) {
+      // Replace the misleading link with the section actually shown.
+      throw new HttpResponseException(new RedirectResponse(static::getUrl(['section' => $this->section])));
     }
     $this->controlSnapshot = AiWriterPlugin::get()->controlContext()->snapshot();
     $this->fillSettings();

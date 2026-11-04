@@ -239,8 +239,8 @@ class AiWriterPlugin implements Plugin
   /**
    * Whether administrative changes need a reason. Null (default): required for actions against one person (block/unblock,
    * individual limit, extra credits, period reset) and for renewing everyone, optional for global settings and pausing AI.
-   * true requires it everywhere and false nowhere. A Closure may take Panel $panel and string $action (the audited action,
-   * e.g. 'block', 'availability') and return a bool, or null for the default of that action.
+   * true requires it everywhere and false nowhere. A Closure may take Panel $panel and ?string $action (the audited action,
+   * e.g. 'block', 'availability'; null when read through getRequireReason() without one) and return a bool, or null for the default.
    */
   public function requireReason(bool|Closure|null $condition = true): static
   {
@@ -248,10 +248,13 @@ class AiWriterPlugin implements Plugin
     return $this;
   }
 
-  /** The configured override: true, false, or null when each action keeps its default. */
-  public function getRequireReason(): ?bool
+  /**
+   * The configured override: true, false, or null when each action keeps its default. Pass an action to read what a
+   * Closure decides for it; without one the Closure receives null as $action, so declare it as ?string $action.
+   */
+  public function getRequireReason(?string $action = null): ?bool
   {
-    $value = $this->evaluate($this->requireReason, ['panel' => $this->panel], [Panel::class => $this->panel]);
+    $value = $this->evaluate($this->requireReason, ['panel' => $this->panel, 'action' => $action], [Panel::class => $this->panel]);
     return $value === null ? null : (bool) $value;
   }
 
