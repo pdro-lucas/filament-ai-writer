@@ -7,10 +7,22 @@ use Filament\Contracts\Plugin;
 use Filament\Facades\Filament;
 use Filament\Panel;
 use Filament\Support\Concerns\EvaluatesClosures;
+use Filament\View\PanelsRenderHook;
+use Illuminate\Contracts\Auth\Authenticatable;
+use Illuminate\Validation\ValidationException;
+use InvalidArgumentException;
 use LogicException;
+use PdroLucas\FilamentAiWriter\Abuse\Abuse;
+use PdroLucas\FilamentAiWriter\Controls\ActorIdentity;
+use PdroLucas\FilamentAiWriter\Controls\ControlContext;
+use PdroLucas\FilamentAiWriter\Controls\Controls;
+use PdroLucas\FilamentAiWriter\Credits\Credits;
 use PdroLucas\FilamentAiWriter\Generation\Generation;
-use PdroLucas\FilamentAiWriter\Usage\UsageStatistics;
+use PdroLucas\FilamentAiWriter\Pages\AiControlsPage;
+use PdroLucas\FilamentAiWriter\Pages\MyAiCreditsPage;
 use PdroLucas\FilamentAiWriter\Pages\UsageStatisticsPage;
+use PdroLucas\FilamentAiWriter\Usage\UsageStatistics;
+use ReflectionClass;
 
 class AiWriterPlugin implements Plugin
 {
@@ -22,34 +34,63 @@ class AiWriterPlugin implements Plugin
 
   protected bool|Closure $controls = false;
 
-  protected ?Closure $useAiAuthorization = null;
-  protected ?Closure $viewStatisticsAuthorization = null;
-  protected ?Closure $manageAuthorization = null;
+  protected bool|Closure|null $useAiAuthorization = null;
+  protected bool|Closure|null $viewStatisticsAuthorization = null;
+  protected bool|Closure|null $manageAuthorization = null;
 
-  protected ?Closure $scopeResolver = null;
+  protected string|Closure|null $scope = null;
   protected ?Closure $actorSearch = null;
   protected ?Closure $actorResolver = null;
 
-  public function abuse(): \PdroLucas\FilamentAiWriter\Abuse\Abuse
+  protected bool|Closure $usersTab = true;
+  protected bool|Closure $creditsIndicator = true;
+
+  /** @var class-string<AiControlsPage>|Closure */
+  protected string|Closure $controlsPage = AiControlsPage::class;
+
+  /** @var class-string<MyAiCreditsPage>|Closure */
+  protected string|Closure $creditsPage = MyAiCreditsPage::class;
+
+  public function abuse(): Abuse
   {
-    return app(\PdroLucas\FilamentAiWriter\Abuse\Abuse::class);
+    return app(Abuse::class);
   }
 
-  public function credits(): \PdroLucas\FilamentAiWriter\Credits\Credits
+  public function credits(): Credits
   {
-    return app(\PdroLucas\FilamentAiWriter\Credits\Credits::class);
+    return app(Credits::class);
   }
 
-  public function controlsService(): \PdroLucas\FilamentAiWriter\Controls\Controls
+  public function controlsService(): Controls
   {
-    return app(\PdroLucas\FilamentAiWriter\Controls\Controls::class);
+    return app(Controls::class);
   }
 
-  /** Server-only resolver: fn (Authenticatable $actor, Panel $panel): string. */
-  public function resolveScopeUsing(Closure $callback): static
+  /**
+   * Tenant/scope that credits, controls and audit are partitioned by. Defaults to the panel id.
+   * Server-only; a Closure may take Authenticatable $actor and Panel $panel and must return a string.
+   */
+  public function scope(string|Closure|null $scope): static
   {
-    $this->scopeResolver = $callback;
+    $this->scope = $scope;
     return $this;
+  }
+
+  public function getScope(): string
+  {
+    $actor = $this->panel?->auth()->user();
+    if ($this->panel === null || $actor === null) {
+      throw new LogicException('An authenticated plugin panel is required to resolve the AI Writer scope.');
+    }
+    $scope = $this->scope === null ? 'panel:' . $this->panel->getId() : $this->evaluate($this->scope, [
+      'actor' => $actor,
+      'user' => $actor,
+      'panel' => $this->panel,
+    ], [Authenticatable::class => $actor, $actor::class => $actor, Panel::class => $this->panel]);
+    if (!is_string($scope)) {
+      throw new LogicException('The AI Writer scope must resolve to a string.');
+    }
+    return $scope;
   }
 
   /** Search and resolve must restrict results to actors manageable in the supplied scope. */
@@ -60,12 +101,22 @@ class AiWriterPlugin implements Plugin
     return $this;
   }
 
+  public function getActorSearch(): ?Closure
+  {
+    return $this->actorSearch;
+  }
+
+  public function getActorResolver(): ?Closure
+  {
+    return $this->actorResolver;
+  }
+
   public function hasActorDirectory(): bool
   {
     return $this->actorSearch !== null && $this->actorResolver !== null;
   }
 
-  public function controlContext(): \PdroLucas\FilamentAiWriter\Controls\ControlContext
+  public function controlContext(): ControlContext
   {
     $panel = $this->panel;
     $actor = $panel?->auth()->user();
@@ -73,22 +124,18 @@ class AiWriterPlugin implements Plugin
     if ($panel === null || Filament::getCurrentPanel() !== $panel || $actor === null || (!is_int($id) && !is_string($id))) {
       throw new LogicException('An authenticated current plugin panel is required.');
     }
-    $scope = $this->scopeResolver === null ? 'panel:' . $panel->getId() : ($this->scopeResolver)($actor, $panel);
-    if (!is_string($scope)) {
-      throw new LogicException('The AI Writer scope resolver must return a string.');
-    }
-    return new \PdroLucas\FilamentAiWriter\Controls\ControlContext($panel->getId(), $panel->getAuthGuard(), $scope,
-      new \PdroLucas\FilamentAiWriter\Controls\ActorIdentity($actor::class, $id));
+    return new ControlContext($panel->getId(), $panel->getAuthGuard(), $this->getScope(),
+      new ActorIdentity($actor::class, $id));
   }
 
-  public function searchActors(string $search, \PdroLucas\FilamentAiWriter\Controls\ControlContext $context): array
+  public function searchActors(string $search, ControlContext $context): array
   {
     $this->controlsService()->authorize($context);
     if (!$this->hasActorDirectory()) {
       return [];
     }
     if (mb_strlen($search) > 100 || !mb_check_encoding($search, 'UTF-8')) {
-      throw \Illuminate\Validation\ValidationException::withMessages(['actor' => 'Search must contain at most 100 characters.']);
+      throw ValidationException::withMessages(['actor' => 'Search must contain at most 100 characters.']);
     }
     $results = ($this->actorSearch)($search, $context->scope, $this->panel);
     if (!is_iterable($results)) {
@@ -100,7 +147,7 @@ class AiWriterPlugin implements Plugin
       if (++$count > 50) {
         break;
       }
-      if (!$actor instanceof \PdroLucas\FilamentAiWriter\Controls\ActorIdentity) {
+      if (!$actor instanceof ActorIdentity) {
         throw new LogicException('Actor search must return ActorIdentity results.');
       }
       $options[$actor->token()] = $actor->label !== '' ? $actor->label : $actor->id;
@@ -108,22 +155,22 @@ class AiWriterPlugin implements Plugin
     return $options;
   }
 
-  public function resolveActor(string $token, \PdroLucas\FilamentAiWriter\Controls\ControlContext $context): ?\PdroLucas\FilamentAiWriter\Controls\ActorIdentity
+  public function resolveActor(string $token, ControlContext $context): ?ActorIdentity
   {
     $this->controlsService()->authorize($context);
     if (!$this->hasActorDirectory()) {
       return null;
     }
     try {
-      $identity = \PdroLucas\FilamentAiWriter\Controls\ActorIdentity::fromToken($token);
-    } catch (\InvalidArgumentException) {
+      $identity = ActorIdentity::fromToken($token);
+    } catch (InvalidArgumentException) {
       return null;
     }
     $actor = ($this->actorResolver)($identity->type, $identity->id, $context->scope, $this->panel);
     if ($actor === null) {
       return null;
     }
-    if (!$actor instanceof \PdroLucas\FilamentAiWriter\Controls\ActorIdentity || $actor->type !== $identity->type || $actor->id !== $identity->id) {
+    if (!$actor instanceof ActorIdentity || $actor->type !== $identity->type || $actor->id !== $identity->id) {
       throw new LogicException('Actor resolver must return the selected identity or null.');
     }
     return $actor;
@@ -164,61 +211,77 @@ class AiWriterPlugin implements Plugin
     return 'ai-writer';
   }
 
-  protected bool $creditsInTopbar = true;
-
-  public function creditsInTopbar(bool $enabled = true): static
+  /** Whether the topbar credits indicator is shown. Still requires controls() and enabled quotas. */
+  public function creditsIndicator(bool|Closure $condition = true): static
   {
-    $this->creditsInTopbar = $enabled;
+    $this->creditsIndicator = $condition;
     return $this;
   }
 
-  public function hasCreditsInTopbar(): bool
+  public function hasCreditsIndicator(): bool
   {
-    return $this->creditsInTopbar;
+    return $this->evaluateCondition($this->creditsIndicator);
   }
 
-  /** @return class-string<\PdroLucas\FilamentAiWriter\Pages\MyAiCreditsPage> */
-  public function getCreditsPage(): string
+  /** The Users section; it also needs actorDirectoryUsing() and is unreachable without it. */
+  public function usersTab(bool|Closure $condition = true): static
   {
-    return $this->creditsPage;
-  }
-
-  protected bool $hasUsersTab = true;
-
-  public function usersTab(bool $enabled = true): static
-  {
-    $this->hasUsersTab = $enabled;
+    $this->usersTab = $condition;
     return $this;
   }
 
-  /** The Users section needs a directory; without one it is hidden and unreachable. */
   public function hasUsersTab(): bool
   {
-    return $this->hasUsersTab && $this->hasActorDirectory();
+    return $this->evaluateCondition($this->usersTab) && $this->hasActorDirectory();
   }
 
-  /** @var class-string<\PdroLucas\FilamentAiWriter\Pages\AiControlsPage> */
-  protected string $controlsPage = \PdroLucas\FilamentAiWriter\Pages\AiControlsPage::class;
-
-  /** @var class-string<\PdroLucas\FilamentAiWriter\Pages\MyAiCreditsPage> */
-  protected string $creditsPage = \PdroLucas\FilamentAiWriter\Pages\MyAiCreditsPage::class;
-
-  public function controlsPage(string $page): static
+  /** @param class-string<AiControlsPage>|Closure(): class-string<AiControlsPage> $page */
+  public function controlsPage(string|Closure $page): static
   {
-    if (!is_a($page, \PdroLucas\FilamentAiWriter\Pages\AiControlsPage::class, true) || (new \ReflectionClass($page))->isAbstract()) {
-      throw new \InvalidArgumentException('Controls page must be a concrete AiControlsPage subclass.');
+    if (is_string($page)) {
+      $this->assertPage($page, AiControlsPage::class, 'Controls');
     }
     $this->controlsPage = $page;
     return $this;
   }
 
-  public function creditsPage(string $page): static
+  /** @return class-string<AiControlsPage> */
+  public function getControlsPage(): string
   {
-    if (!is_a($page, \PdroLucas\FilamentAiWriter\Pages\MyAiCreditsPage::class, true) || (new \ReflectionClass($page))->isAbstract()) {
-      throw new \InvalidArgumentException('Credits page must be a concrete MyAiCreditsPage subclass.');
+    return $this->resolvePage($this->controlsPage, AiControlsPage::class, 'Controls');
+  }
+
+  /** @param class-string<MyAiCreditsPage>|Closure(): class-string<MyAiCreditsPage> $page */
+  public function creditsPage(string|Closure $page): static
+  {
+    if (is_string($page)) {
+      $this->assertPage($page, MyAiCreditsPage::class, 'Credits');
     }
     $this->creditsPage = $page;
     return $this;
+  }
+
+  /** @return class-string<MyAiCreditsPage> */
+  public function getCreditsPage(): string
+  {
+    return $this->resolvePage($this->creditsPage, MyAiCreditsPage::class, 'Credits');
+  }
+
+  protected function resolvePage(string|Closure $page, string $base, string $label): string
+  {
+    $page = $this->evaluate($page, ['panel' => $this->panel], [Panel::class => $this->panel]);
+    if (!is_string($page)) {
+      throw new InvalidArgumentException($label . ' page must resolve to a class name.');
+    }
+    $this->assertPage($page, $base, $label);
+    return $page;
+  }
+
+  protected function assertPage(string $page, string $base, string $label): void
+  {
+    if (!is_a($page, $base, true) || (new ReflectionClass($page))->isAbstract()) {
+      throw new InvalidArgumentException($label . ' page must be a concrete ' . class_basename($base) . ' subclass.');
+    }
   }
 
   public function register(Panel $panel): void
@@ -240,9 +303,9 @@ class AiWriterPlugin implements Plugin
     if (!$this->isControlsEnabled()) {
       return;
     }
-    $panel->pages([$this->controlsPage, $this->creditsPage]);
-    $panel->renderHook(\Filament\View\PanelsRenderHook::USER_MENU_BEFORE, function () use ($panel) {
-      if (Filament::getCurrentPanel() !== $panel || !$this->isControlsEnabled() || !$this->hasCreditsInTopbar()) { return ''; }
+    $panel->pages([$this->getControlsPage(), $this->getCreditsPage()]);
+    $panel->renderHook(PanelsRenderHook::USER_MENU_BEFORE, function () use ($panel) {
+      if (Filament::getCurrentPanel() !== $panel || !$this->isControlsEnabled() || !$this->hasCreditsIndicator()) { return ''; }
       try { if (!$this->canUseAi()) { return ''; } }
       catch (\Throwable) { return ''; }
       try { if (!$this->credits()->quotaEnabled($this->controlContext())) { return ''; } }
@@ -262,7 +325,7 @@ class AiWriterPlugin implements Plugin
 
   public function isUsageTrackingEnabled(): bool
   {
-    return (bool) $this->evaluate($this->usageTracking, ['panel' => $this->panel], [Panel::class => $this->panel]);
+    return $this->evaluateCondition($this->usageTracking);
   }
 
   /**
@@ -282,30 +345,32 @@ class AiWriterPlugin implements Plugin
 
   private function evaluateControls(): bool
   {
-    return (bool) $this->evaluate($this->controls, ['panel' => $this->panel], [Panel::class => $this->panel]);
+    return $this->evaluateCondition($this->controls);
   }
 
-  /** @param Closure(\Illuminate\Contracts\Auth\Authenticatable, Panel): bool $callback */
-  public function authorizeUseAiUsing(Closure $callback): static
+  protected function evaluateCondition(bool|Closure $condition): bool
   {
-    $this->useAiAuthorization = $callback;
+    return (bool) $this->evaluate($condition, ['panel' => $this->panel], [Panel::class => $this->panel]);
+  }
 
+  /** Permission to use the writer. Granted to any authenticated actor by default. A Closure may take Authenticatable $actor and Panel $panel. */
+  public function authorizeUseAi(bool|Closure $condition = true): static
+  {
+    $this->useAiAuthorization = $condition;
     return $this;
   }
 
-  /** @param Closure(\Illuminate\Contracts\Auth\Authenticatable, Panel): bool $callback */
-  public function authorizeViewStatisticsUsing(Closure $callback): static
+  /** Permission to read statistics. Denied by default. A Closure may take Authenticatable $actor and Panel $panel. */
+  public function authorizeViewStatistics(bool|Closure $condition = true): static
   {
-    $this->viewStatisticsAuthorization = $callback;
-
+    $this->viewStatisticsAuthorization = $condition;
     return $this;
   }
 
-  /** @param Closure(\Illuminate\Contracts\Auth\Authenticatable, Panel): bool $callback */
-  public function authorizeManageUsing(Closure $callback): static
+  /** Permission to manage controls and credits. Denied by default. A Closure may take Authenticatable $actor and Panel $panel. */
+  public function authorizeManage(bool|Closure $condition = true): static
   {
-    $this->manageAuthorization = $callback;
-
+    $this->manageAuthorization = $condition;
     return $this;
   }
 
@@ -324,7 +389,7 @@ class AiWriterPlugin implements Plugin
     return $this->authorize($this->manageAuthorization, false);
   }
 
-  protected function authorize(?Closure $callback, bool $default): bool
+  protected function authorize(bool|Closure|null $condition, bool $default): bool
   {
     $user = $this->panel?->auth()->user();
 
@@ -332,6 +397,10 @@ class AiWriterPlugin implements Plugin
       return false;
     }
 
-    return $callback === null ? $default : (bool) $callback($user, $this->panel);
+    return $condition === null ? $default : (bool) $this->evaluate($condition, [
+      'actor' => $user,
+      'user' => $user,
+      'panel' => $this->panel,
+    ], [Authenticatable::class => $user, $user::class => $user, Panel::class => $this->panel]);
   }
 }

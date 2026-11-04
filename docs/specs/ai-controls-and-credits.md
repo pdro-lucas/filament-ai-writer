@@ -79,7 +79,7 @@ Reservas interrompidas por encerramento do processo expiram após o deadline con
 
 ### 1. Persistência, escopos e administração básica
 
-Implementação: `Controls` centraliza disponibilidade, bloqueio e auditoria; `ControlContext` congela painel/guard/escopo/administrador. `resolveScopeUsing` e `actorDirectoryUsing(search, resolve)` são integrações explícitas do host, documentadas no README. A página exige administração e recusa troca de contexto em requisições posteriores. Migration nova publicável, sem execução automática. Testes, QA visual e revisão efetivamente realizados constam do relatório de entrega; source/QA aprovados, contrato inflight fechado e revisão final do Dique aprovada sem blockers.
+Implementação: `Controls` centraliza disponibilidade, bloqueio e auditoria; `ControlContext` congela painel/guard/escopo/administrador. `scope` e `actorDirectoryUsing(search, resolve)` são integrações explícitas do host, documentadas no README. A página exige administração e recusa troca de contexto em requisições posteriores. Migration nova publicável, sem execução automática. Testes, QA visual e revisão efetivamente realizados constam do relatório de entrega; source/QA aprovados, contrato inflight fechado e revisão final do Dique aprovada sem blockers.
 
 Definir e revisar o contrato de escopo/identidade, a integração de usuários, armazenamento de políticas e auditoria. Implementar habilitação e bloqueio usando a permissão administrativa já existente. Preparar a Workbench com exemplos de integração independentes do usuário da aplicação consumidora.
 

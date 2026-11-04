@@ -79,11 +79,11 @@ use PdroLucas\FilamentAiWriter\AiWriterPlugin;
 
 $panel->plugin(
     AiWriterPlugin::make()
-        ->authorizeUseAiUsing(fn (Authenticatable $user, $panel): bool =>
+        ->authorizeUseAi(fn (Authenticatable $user, $panel): bool =>
             Gate::forUser($user)->allows('use-ai-writer'))
-        ->authorizeViewStatisticsUsing(fn (Authenticatable $user, $panel): bool =>
+        ->authorizeViewStatistics(fn (Authenticatable $user, $panel): bool =>
             Gate::forUser($user)->allows('view-ai-writer-statistics'))
-        ->authorizeManageUsing(fn (Authenticatable $user, $panel): bool =>
+        ->authorizeManage(fn (Authenticatable $user, $panel): bool =>
             Gate::forUser($user)->allows('manage-ai-writer')),
 );
 ```
@@ -104,7 +104,7 @@ AiWriterPlugin::make()
     ->controls();      // requires usageTracking()
 ```
 
-`usageTracking()` records each generation in the metadata-only usage ledger, deduplicates operations, gives each one an execution deadline that `ai-writer:recover-operations` can close, and registers the **AI Writer usage** statistics page (still gated by `authorizeViewStatisticsUsing()`). It does not read or reserve credits, blocks or abuse settings.
+`usageTracking()` records each generation in the metadata-only usage ledger, deduplicates operations, gives each one an execution deadline that `ai-writer:recover-operations` can close, and registers the **AI Writer usage** statistics page (still gated by `authorizeViewStatistics()`). It does not read or reserve credits, blocks or abuse settings.
 
 `controls()` adds admission under one scope lock: AI availability, actor blocks, credits and abuse protection, plus the **AI Writer controls** and **My AI credits** pages and the credits indicator. It requires `usageTracking()`; enabling it alone throws a configuration error when the panel registers. Both modules use the same four package migrations (`000001`–`000004`): they build on each other and are published together.
 
@@ -116,9 +116,9 @@ The plugin ships three native panel pages:
 
 | Surface | Required permission | Purpose |
 | --- | --- | --- |
-| **AI Writer controls** (`ai-writer-controls`) | `authorizeManageUsing()` | Settings for availability, quotas and abuse protections; Users with a reusable Manage AI modal; paginated Activity audit |
-| **My AI credits** (`my-ai-credits`) | `authorizeUseAiUsing()` | The authenticated actor's availability, balance and protection status |
-| **AI Writer usage** (`ai-writer-usage`) | `authorizeViewStatisticsUsing()` | Read-only metadata statistics for the current panel |
+| **AI Writer controls** (`ai-writer-controls`) | `authorizeManage()` | Settings for availability, quotas and abuse protections; Users with a reusable Manage AI modal; paginated Activity audit |
+| **My AI credits** (`my-ai-credits`) | `authorizeUseAi()` | The authenticated actor's availability, balance and protection status |
+| **AI Writer usage** (`ai-writer-usage`) | `authorizeViewStatistics()` | Read-only metadata statistics for the current panel |
 
 AI starts enabled, with quotas and all abuse protections off. No business limits are supplied. Management changes require a reason of at most 500 characters and write an audit entry atomically. Disabling AI or blocking an actor prevents **new admissions**; already admitted generations retain their delivery rights and execution deadlines. Quotas off does not override availability, blocks or permissions, and enabling quotas never retroactively charges a free generation.
 
@@ -130,9 +130,11 @@ Choose what appears on each panel instance:
 use PdroLucas\FilamentAiWriter\AiWriterPlugin;
 
 AiWriterPlugin::make()
-    ->usersTab(false)          // Keep Settings/Activity; manage users in your Resource.
-    ->creditsInTopbar(false);  // Keep the personal credit page; hide its topbar indicator.
+    ->usersTab(false)           // Keep Settings/Activity; manage users in your Resource.
+    ->creditsIndicator(false);  // Keep the personal credit page; hide its topbar indicator.
 ```
+
+Plugin API conventions: every on/off or text setter accepts a value or a `Closure` (`bool|Closure`, `string|Closure`) and is evaluated when used, not when the plugin is configured. Closures can type-hint or name `$panel` and, for authorization and `scope()`, `$actor` (also available as `$user`). Each setter has a matching getter (`usersTab()` / `hasUsersTab()`, `scope()` / `getScope()`, `authorizeManage()` / `canManage()`). Setters are grouped by feature prefix: `usageTracking()`, `controls()`, `controlsPage()`, `creditsPage()`, `creditsIndicator()`, `usersTab()`, `authorize*()` and `scope()`. Module and page switches also decide which pages and routes exist, so they are read when the panel registers the plugin as well as on later requests.
 
 These options do not revoke permissions. Authorization callbacks enforce access on the server, including later Livewire requests. AI availability, quotas, abuse protections, navigation visibility and retention are separate controls.
 
@@ -490,7 +492,7 @@ No cleanup or deletion runs automatically. Use the plugin statistics service for
 
 ## Current-panel statistics
 
-The plugin registers **AI Writer usage** at `/your-panel/ai-writer-usage`. Login alone does not grant access: configure `authorizeViewStatisticsUsing()` with the host's permission/policy callback. It is independent of AI use and administration permission, and uses the current panel's guard. Permission is checked for page access, every subsequent Livewire request, and each statistics query/aggregate/filter-option read. A mounted page rejects a changed panel context or revoked permission.
+The plugin registers **AI Writer usage** at `/your-panel/ai-writer-usage`. Login alone does not grant access: configure `authorizeViewStatistics()` with the host's permission/policy callback. It is independent of AI use and administration permission, and uses the current panel's guard. Permission is checked for page access, every subsequent Livewire request, and each statistics query/aggregate/filter-option read. A mounted page rejects a changed panel context or revoked permission.
 
 The panel is fixed context, never a selectable cross-panel filter. An authorized viewer can inspect **all actors' metadata within the current panel**, not just their own calls. No cross-panel expansion/global view is exposed. Actor filters identify both actor class and opaque identifier, without joining a host User table or assuming names/roles/ID types.
 

@@ -58,7 +58,7 @@ class UsageStatisticsTest extends TestCase
     $this->seed(DatabaseSeeder::class);
     $this->actingAs(User::firstOrFail(), 'workbench');
     Filament::setCurrentPanel(Filament::getPanel('demo'));
-    AiWriterPlugin::get()->authorizeViewStatisticsUsing(fn () => true);
+    AiWriterPlugin::get()->authorizeViewStatistics(fn () => true);
   }
 
   private function row(string $panel, array $changes = []): int
@@ -196,7 +196,7 @@ class UsageStatisticsTest extends TestCase
       ->assertActionNotMounted()->assertDontSee('PRIVATE-model');
     $page->mountTableAction('details', 'HostActor:someone-else')->assertActionNotMounted();
     $page->mountTableAction('details', $id)->assertActionMounted(\Filament\Actions\Testing\TestAction::make('details')->table($id));
-    AiWriterPlugin::get()->authorizeViewStatisticsUsing(fn () => false);
+    AiWriterPlugin::get()->authorizeViewStatistics(fn () => false);
     $page->call('$refresh')->assertForbidden();
   }
 
@@ -207,7 +207,7 @@ class UsageStatisticsTest extends TestCase
     $service = AiWriterPlugin::get()->statistics();
     $query = $service->query();
     $service->dashboard([]); // Cached data must not bypass a subsequent permission check.
-    AiWriterPlugin::get()->authorizeViewStatisticsUsing(fn () => false);
+    AiWriterPlugin::get()->authorizeViewStatistics(fn () => false);
     try {
       match ($surface) {
         'query' => $service->query()->get(),
@@ -244,9 +244,9 @@ class UsageStatisticsTest extends TestCase
       $actor->shouldReceive('canAccessPanel')->andReturn(false);
       $this->actingAs($actor, 'workbench');
     } elseif ($change === 'panel') {
-      Filament::setCurrentPanel(\Filament\Panel::make()->id('another')->authGuard('workbench')->plugin(AiWriterPlugin::make()->usageTracking()->authorizeViewStatisticsUsing(fn () => true)));
+      Filament::setCurrentPanel(\Filament\Panel::make()->id('another')->authGuard('workbench')->plugin(AiWriterPlugin::make()->usageTracking()->authorizeViewStatistics(fn () => true)));
     } else {
-      AiWriterPlugin::get()->authorizeViewStatisticsUsing(fn () => false);
+      AiWriterPlugin::get()->authorizeViewStatistics(fn () => false);
     }
     $page->call('refresh')->assertForbidden();
     $chart->call('updateChartData')->assertForbidden();

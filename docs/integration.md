@@ -32,16 +32,16 @@ return $panel->plugin(
     AiWriterPlugin::make()
         ->usageTracking() // Ledger and statistics; requires the package migrations.
         ->controls()      // Credits, abuse protection and administration; requires usageTracking().
-        ->authorizeUseAiUsing(fn (Authenticatable $actor, Panel $panel): bool =>
+        ->authorizeUseAi(fn (Authenticatable $actor, Panel $panel): bool =>
             $actor instanceof User && $actor->tenant_id !== null
             && Gate::forUser($actor)->allows('use-ai-writer'))
-        ->authorizeViewStatisticsUsing(fn (Authenticatable $actor, Panel $panel): bool =>
+        ->authorizeViewStatistics(fn (Authenticatable $actor, Panel $panel): bool =>
             $actor instanceof User && $actor->tenant_id !== null
             && Gate::forUser($actor)->allows('view-ai-writer-statistics'))
-        ->authorizeManageUsing(fn (Authenticatable $actor, Panel $panel): bool =>
+        ->authorizeManage(fn (Authenticatable $actor, Panel $panel): bool =>
             $actor instanceof User && $actor->tenant_id !== null
             && Gate::forUser($actor)->allows('manage-ai-writer'))
-        ->resolveScopeUsing(function (Authenticatable $actor, Panel $panel): string {
+        ->scope(function (Authenticatable $actor, Panel $panel): string {
             abort_unless($actor instanceof User && $actor->tenant_id !== null, 403);
             return 'tenant:' . $actor->tenant_id;
         })
@@ -122,17 +122,17 @@ use Illuminate\Support\Facades\Gate;
 use PdroLucas\FilamentAiWriter\AiWriterPlugin;
 
 AiWriterPlugin::make()
-    ->authorizeUseAiUsing(fn ($user, $panel): bool =>
+    ->authorizeUseAi(fn ($user, $panel): bool =>
         Gate::forUser($user)->allows('Use:AiWriter'))
-    ->authorizeViewStatisticsUsing(fn ($user, $panel): bool =>
+    ->authorizeViewStatistics(fn ($user, $panel): bool =>
         Gate::forUser($user)->allows('View:AiWriterUsage'))
-    ->authorizeManageUsing(fn ($user, $panel): bool =>
+    ->authorizeManage(fn ($user, $panel): bool =>
         Gate::forUser($user)->allows('Manage:AiWriter'));
 ```
 
 For example, a Writer role can receive only `Use:AiWriter`, an Analyst only `View:AiWriterUsage`, and an AI Administrator only `Manage:AiWriter`. Give a role multiple permissions when it needs multiple capabilities. Assign users to roles through the host's existing user-management flow. Removing a permission changes subsequent authorization checks; hiding a navigation entry alone does not revoke access.
 
-The permission guard must match the panel's authenticated actor. With Spatie teams or tenant-aware permissions, establish the host's authorized team context before checking Gate. AI Writer's `resolveScopeUsing()` defines its control/credit scope; it does not configure Shield teams automatically. Statistics authorization covers all metadata in the current panel, so grant that permission accordingly.
+The permission guard must match the panel's authenticated actor. With Spatie teams or tenant-aware permissions, establish the host's authorized team context before checking Gate. AI Writer's `scope()` defines its control/credit scope; it does not configure Shield teams automatically. Statistics authorization covers all metadata in the current panel, so grant that permission accordingly.
 
 Gate-based checks also honor a host's Super Admin rule implemented with `Gate::before()`. Direct `hasPermissionTo()` checks bypass that Gate override, as explained in Spatie's [Super Admin documentation](https://github.com/spatie/laravel-permission/blob/main/docs/basic-usage/super-admin.md). A permission grant still does not bypass AI Writer's availability, user blocks, quotas or abuse protections.
 
@@ -144,7 +144,7 @@ use Illuminate\Support\Facades\Gate;
 use PdroLucas\FilamentAiWriter\AiWriterPlugin;
 
 AiWriterPlugin::make()
-    ->authorizeUseAiUsing(fn ($user): bool =>
+    ->authorizeUseAi(fn ($user): bool =>
         $user instanceof StaffUser
         && Gate::forUser($user)->allows('Use:AiWriter'));
 ```
@@ -158,11 +158,11 @@ The host owns those rules; the plugin rechecks the configured callbacks on the s
 | Desired outcome | Supported control | Effect |
 | --- | --- | --- |
 | Use your existing User Resource | `usersTab(false)` | Hides the built-in Users task and rejects forged requests to it; Settings/Activity and scoped management APIs remain |
-| Remove the topbar indicator | `creditsInTopbar(false)` | Hides that instance's indicator; the personal page and enforcement remain |
+| Remove the topbar indicator | `creditsIndicator(false)` | Hides that instance's indicator; the personal page and enforcement remain |
 | Hide controls/personal navigation | Concrete page subclasses below | Removes navigation entries; routes and inherited authorization remain |
-| Deny AI use | `authorizeUseAiUsing(fn (): bool => false)` | Denies new writer requests and own-credit surfaces; registration, storage and ledger remain required |
-| Deny statistics | `authorizeViewStatisticsUsing(fn (): bool => false)` | Denies the statistics route and later reads, independently of use/manage |
-| Deny administration | `authorizeManageUsing(fn (): bool => false)` | Denies controls and management actions/reads/writes, independently of use/statistics |
+| Deny AI use | `authorizeUseAi(fn (): bool => false)` | Denies new writer requests and own-credit surfaces; registration, storage and ledger remain required |
+| Deny statistics | `authorizeViewStatistics(fn (): bool => false)` | Denies the statistics route and later reads, independently of use/manage |
+| Deny administration | `authorizeManage(fn (): bool => false)` | Denies controls and management actions/reads/writes, independently of use/statistics |
 | Pause new generations for a scope | `controlsService()->setEnabled($context, false, $reason)` | Audited admission control; already admitted calls can finish |
 | Block one actor | `controlsService()->setBlocked($context, $actor, true, $reason)` | Audited scoped block on new admissions; requires the actor directory |
 | Turn quotas off | `credits()->configure($context, false, $limit, $renewal, $reason)` | Keeps ledger/history; new admissions are free of credit reservation, subject to all other checks |
@@ -208,10 +208,10 @@ AiWriterPlugin::make()
     ->controlsPage(TeamAiControls::class)
     ->creditsPage(TeamAiCredits::class)
     ->usersTab(false)
-    ->creditsInTopbar(false);
+    ->creditsIndicator(false);
 ```
 
-These pages still have routes and their inherited access checks. The plugin exposes class setters for controls and personal credits, not a statistics-page setter. To deny statistics, use its authorization callback; to change a panel's navigation composition, use the host's native Filament navigation configuration.
+These pages still have routes and their inherited access checks. The plugin exposes class setters for controls and personal credits, not a statistics-page setter. To deny statistics, use `authorizeViewStatistics()`; to change a panel's navigation composition, use the host's native Filament navigation configuration.
 
 For a panel where no AI feature should be accessible, set all three authorization callbacks to `false`; optionally also turn off the topbar. To keep generation but remove administration and reporting, leave use permission configured and deny only management/statistics. Permission changes do not erase history or bypass migration requirements.
 
@@ -402,7 +402,7 @@ The indicator refreshes on the native `ai-writer-credits-changed` Livewire event
 $this->dispatch('ai-writer-credits-changed');
 ```
 
-There is no polling or custom JavaScript. Direct service calls and other browser sessions do not broadcast changes to this browser; a normal refresh reads them. `creditsInTopbar(false)` only removes the indicator.
+There is no polling or custom JavaScript. Direct service calls and other browser sessions do not broadcast changes to this browser; a normal refresh reads them. `creditsIndicator(false)` only removes the indicator.
 
 ## Customize presentation
 

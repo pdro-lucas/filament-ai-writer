@@ -25,7 +25,7 @@ class OwnCreditsIndicator extends Component
     $this->panelId = Filament::getCurrentPanel()?->getId();
     try {
       $panel = Filament::getCurrentPanel();
-      if ($panel?->hasPlugin('ai-writer') && ($plugin = AiWriterPlugin::get())->isControlsEnabled() && $plugin->hasCreditsInTopbar() && $plugin->canUseAi()) {
+      if ($panel?->hasPlugin('ai-writer') && ($plugin = AiWriterPlugin::get())->isControlsEnabled() && $plugin->hasCreditsIndicator() && $plugin->canUseAi()) {
         $this->contextSnapshot = $plugin->controlContext()->snapshot();
       }
     } catch (Throwable) {
@@ -46,7 +46,7 @@ class OwnCreditsIndicator extends Component
         return view('filament-ai-writer::credits-indicator', $hidden);
       }
       $plugin = AiWriterPlugin::get();
-      if (!$plugin->isControlsEnabled() || !$plugin->hasCreditsInTopbar() || !$plugin->canUseAi()) {
+      if (!$plugin->isControlsEnabled() || !$plugin->hasCreditsIndicator() || !$plugin->canUseAi()) {
         return view('filament-ai-writer::credits-indicator', $hidden);
       }
       $state = ['visible' => true, 'label' => 'Credits unavailable', 'tooltip' => 'Credits unavailable. Try again later.', 'url' => null];

@@ -120,7 +120,7 @@ class WriterDemoTest extends TestCase
       ->assertSet('data.content', 'Core result.');
 
     $this->assertSame([], array_values(array_filter($queries, fn (string $sql): bool => str_contains($sql, 'filament_ai_writer'))));
-    AiWriterPlugin::get()->authorizeUseAiUsing(fn () => false);
+    AiWriterPlugin::get()->authorizeUseAi(fn () => false);
     $this->expectException(\Illuminate\Auth\Access\AuthorizationException::class);
     AiWriterPlugin::get()->generation()->run('prompt', 'input', fn () => $this->fail('Denied use must not deliver'), fn () => null, 'content');
   }
@@ -130,7 +130,7 @@ class WriterDemoTest extends TestCase
   {
     $this->signIn();
     $plugin = AiWriterPlugin::get();
-    $plugin->authorizeManageUsing(fn () => true);
+    $plugin->authorizeManage(fn () => true);
     $context = $plugin->controlContext();
     // Stored controls that would refuse this generation if admission ran.
     $plugin->credits()->configure($context, true, 0, 'manual', 'No credits');
@@ -183,7 +183,7 @@ class WriterDemoTest extends TestCase
     Http::fake();
     $allowPlugin = true;
     $allowAction = true;
-    AiWriterPlugin::get()->authorizeUseAiUsing(function () use (&$allowPlugin): bool {
+    AiWriterPlugin::get()->authorizeUseAi(function () use (&$allowPlugin): bool {
       return $allowPlugin;
     });
 
@@ -321,7 +321,7 @@ class WriterDemoTest extends TestCase
   {
     $this->signIn();
     $plugin = AiWriterPlugin::get();
-    $plugin->authorizeManageUsing(fn () => true);
+    $plugin->authorizeManage(fn () => true);
     $context = $plugin->controlContext();
     $plugin->credits()->configure($context, true, 3, 'manual', 'Start quota');
     Exceptions::fake();

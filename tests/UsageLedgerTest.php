@@ -185,7 +185,7 @@ class UsageLedgerTest extends TestCase
   {
     $this->login();
     $plugin = AiWriterPlugin::get();
-    $plugin->authorizeManageUsing(fn () => true);
+    $plugin->authorizeManage(fn () => true);
     $context = $plugin->controlContext();
     $plugin->credits()->configure($context, $quota, 1, 'manual', 'Start');
     config(['filament-ai-writer.timeout' => 60, 'filament-ai-writer.recovery.margin_seconds' => 10]);
@@ -260,7 +260,7 @@ class UsageLedgerTest extends TestCase
   {
     $this->login();
     $plugin = AiWriterPlugin::get();
-    $plugin->authorizeManageUsing(fn () => true);
+    $plugin->authorizeManage(fn () => true);
     $context = $plugin->controlContext();
     $plugin->credits()->configure($context, true, 1, 'manual', 'Start');
     config(['filament-ai-writer.timeout' => 1, 'filament-ai-writer.recovery.margin_seconds' => 0, 'filament-ai-writer.pricing.openai.returned-model' => ['input_usd_per_million' => '2', 'output_usd_per_million' => '10']]);
@@ -317,7 +317,7 @@ class UsageLedgerTest extends TestCase
     $this->login();
     $plugin = AiWriterPlugin::get();
     $control = $plugin->controlContext();
-    $plugin->authorizeManageUsing(fn () => true);
+    $plugin->authorizeManage(fn () => true);
     $plugin->credits()->configure($control, true, 1, 'manual', 'Quota for failure');
     Http::fake(['*' => Http::response($this->response(), 200, ['x-request-id' => 'request-id'])]);
     if ($stage !== 'callback') {
@@ -415,7 +415,7 @@ class UsageLedgerTest extends TestCase
   {
     $this->login();
     $plugin = AiWriterPlugin::get();
-    $plugin->authorizeManageUsing(fn () => true);
+    $plugin->authorizeManage(fn () => true);
     $context = $plugin->controlContext();
     $plugin->credits()->configure($context, true, 2, 'manual', 'Start');
     config(['filament-ai-writer.timeout' => 60, 'filament-ai-writer.recovery.margin_seconds' => 10]);

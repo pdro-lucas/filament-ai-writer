@@ -5,6 +5,8 @@ namespace PdroLucas\FilamentAiWriter\Tests;
 use Filament\Facades\Filament;
 use Filament\Panel;
 use Illuminate\Auth\GenericUser;
+use Illuminate\Contracts\Auth\Authenticatable;
+use PdroLucas\FilamentAiWriter\Pages\AiControlsPage;
 use PdroLucas\FilamentAiWriter\AiWriterPlugin;
 
 class PluginAuthorizationTest extends TestCase
@@ -12,9 +14,9 @@ class PluginAuthorizationTest extends TestCase
   public function test_guest_cannot_use_ai_or_access_management_even_with_allowing_callbacks(): void
   {
     $plugin = AiWriterPlugin::get()
-      ->authorizeUseAiUsing(fn () => true)
-      ->authorizeViewStatisticsUsing(fn () => true)
-      ->authorizeManageUsing(fn () => true);
+      ->authorizeUseAi(fn () => true)
+      ->authorizeViewStatistics(fn () => true)
+      ->authorizeManage(fn () => true);
 
     $this->assertFalse($plugin->canUseAi());
     $this->assertFalse($plugin->canViewStatistics());
@@ -37,8 +39,8 @@ class PluginAuthorizationTest extends TestCase
     $actor = new GenericUser(['id' => 'writer:opaque-id']);
     $this->app['auth']->guard('workbench')->setUser($actor);
     $plugin = AiWriterPlugin::get()
-      ->authorizeUseAiUsing(fn ($user, $panel) => false)
-      ->authorizeViewStatisticsUsing(fn ($user, $panel) => $user === $actor && $panel->getId() === 'demo');
+      ->authorizeUseAi(fn ($user, $panel) => false)
+      ->authorizeViewStatistics(fn ($user, $panel) => $user === $actor && $panel->getId() === 'demo');
 
     $otherPanel = Panel::make()->id('other')->authGuard('web');
     $otherPanel->plugin(AiWriterPlugin::make());
@@ -53,7 +55,7 @@ class PluginAuthorizationTest extends TestCase
     $this->assertTrue($otherPlugin->canUseAi());
     $this->assertFalse($otherPlugin->canViewStatistics());
 
-    $plugin->authorizeManageUsing(fn ($user, $panel) => $user === $actor && $panel->getId() === 'demo');
+    $plugin->authorizeManage(fn ($user, $panel) => $user === $actor && $panel->getId() === 'demo');
     $this->assertTrue($plugin->canManage());
     $this->app['auth']->guard('workbench')->forgetUser();
     $this->assertFalse($plugin->canManage());
@@ -69,14 +71,14 @@ class PluginAuthorizationTest extends TestCase
     $this->assertContains($controls, $customPanel->getPages());
     $this->assertContains($credits, $customPanel->getPages());
     $this->assertSame($credits, $plugin->getCreditsPage());
-    $plugin->creditsInTopbar(false);
-    $this->assertFalse($plugin->hasCreditsInTopbar());
+    $plugin->creditsIndicator(false);
+    $this->assertFalse($plugin->hasCreditsIndicator());
     $defaultPanel = Panel::make()->id('default-pages')->plugin(AiWriterPlugin::make()->usageTracking(fn (Panel $panel): bool => $panel->getId() === 'default-pages')->controls(fn (Panel $panel): bool => $panel->getId() === 'default-pages'));
     $this->assertContains(\PdroLucas\FilamentAiWriter\Pages\AiControlsPage::class, $defaultPanel->getPages());
     $this->assertContains(\PdroLucas\FilamentAiWriter\Pages\UsageStatisticsPage::class, $defaultPanel->getPages());
     $this->assertSame([], Panel::make()->id('core-only')->plugin(AiWriterPlugin::make())->getPages());
     $this->assertNotContains($controls, $defaultPanel->getPages());
-    $this->assertTrue($defaultPanel->getPlugin('ai-writer')->hasCreditsInTopbar());
+    $this->assertTrue($defaultPanel->getPlugin('ai-writer')->hasCreditsIndicator());
     foreach (['controlsPage', 'creditsPage'] as $method) {
       try {
         $plugin->{$method}(\Filament\Pages\Page::class);
@@ -85,6 +87,36 @@ class PluginAuthorizationTest extends TestCase
         $this->addToAssertionCount(1);
       }
     }
+  }
+
+  public function test_setters_accept_values_or_closures_evaluated_when_used_not_when_set(): void
+  {
+    $actor = new GenericUser(['id' => 'writer:opaque-id']);
+    $this->app['auth']->guard('workbench')->setUser($actor);
+    $calls = 0;
+    $state = ['users' => false, 'indicator' => false, 'scope' => 'tenant-a', 'use' => false];
+    $plugin = AiWriterPlugin::make()
+      ->usersTab(function () use (&$calls, &$state): bool { $calls++; return $state['users']; })
+      ->creditsIndicator(function () use (&$state): bool { return $state['indicator']; })
+      ->scope(function (Authenticatable $actor, Panel $panel) use (&$state): string { return $state['scope'] . ':' . $panel->getId(); })
+      ->authorizeUseAi(function ($actor) use (&$state): bool { return $state['use']; })
+      ->authorizeManage(true)
+      ->actorDirectoryUsing(fn () => [], fn () => null);
+    Panel::make()->id('lazy')->authGuard('workbench')->plugin($plugin);
+
+    $this->assertSame(0, $calls, 'Closures must not run when the plugin is configured or registered.');
+    $this->assertFalse($plugin->hasUsersTab());
+    $this->assertFalse($plugin->hasCreditsIndicator());
+    $this->assertFalse($plugin->canUseAi());
+    $this->assertTrue($plugin->canManage());
+    $this->assertSame('tenant-a:lazy', $plugin->getScope());
+
+    $state = ['users' => true, 'indicator' => true, 'scope' => 'tenant-b', 'use' => true];
+    $this->assertTrue($plugin->hasUsersTab());
+    $this->assertTrue($plugin->hasCreditsIndicator());
+    $this->assertTrue($plugin->canUseAi());
+    $this->assertSame('tenant-b:lazy', $plugin->getScope());
+    $this->assertSame(AiControlsPage::class, $plugin->getControlsPage());
   }
 
   public function test_controls_without_usage_tracking_is_a_registration_error(): void
