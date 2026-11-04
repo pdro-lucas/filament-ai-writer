@@ -31,8 +31,8 @@ class WriterDemoTest extends TestCase
   public function test_generation_uses_the_tests_own_http_fake_and_an_isolated_database(): void
   {
     $this->assertSame('testing', DB::getDefaultConnection());
-    $this->assertSame(env('DB_CONNECTION', 'sqlite'), DB::connection()->getDriverName());
-    $this->assertSame(env('DB_DATABASE', ':memory:'), DB::connection()->getDatabaseName());
+    $this->assertSame(env('AI_WRITER_TEST_DB_CONNECTION', 'sqlite'), DB::connection()->getDriverName());
+    $this->assertSame(env('AI_WRITER_TEST_DB_DATABASE', ':memory:'), DB::connection()->getDatabaseName());
     if (DB::connection()->getDriverName() === 'sqlite') {
       $this->assertSame('', DB::select('PRAGMA database_list')[0]->file);
     }

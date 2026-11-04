@@ -620,7 +620,7 @@ Tests bootstrap with `WithWorkbench`, use a separate SQLite `:memory:` connectio
 
 ### Running the suite on MySQL or PostgreSQL
 
-The whole suite also passes on MySQL 8.4 and PostgreSQL 16. Select the database with `DB_CONNECTION` (`mysql` or `pgsql`) and `DB_HOST`, `DB_PORT`, `DB_DATABASE`, `DB_USERNAME`, `DB_PASSWORD`. **The database is wiped by `migrate:fresh`: use a dedicated, empty one.** With Docker:
+The whole suite also passes on MySQL 8.4 and PostgreSQL 16. Select the database with `AI_WRITER_TEST_DB_CONNECTION` (`mysql` or `pgsql`) and `AI_WRITER_TEST_DB_HOST`, `AI_WRITER_TEST_DB_PORT`, `AI_WRITER_TEST_DB_DATABASE`, `AI_WRITER_TEST_DB_USERNAME`, `AI_WRITER_TEST_DB_PASSWORD`. **The database is wiped by `migrate:fresh`: use a dedicated, empty one.** With Docker:
 
 ```bash
 docker network create ai-writer-test
@@ -628,9 +628,9 @@ docker run -d --name ai-writer-mysql --network ai-writer-test -e MYSQL_ROOT_PASS
 docker run -d --name ai-writer-pg --network ai-writer-test -e POSTGRES_PASSWORD=secret -e POSTGRES_DB=suite postgres:16
 # Use any PHP 8.2+ image with pdo_mysql/pdo_pgsql, intl and zip; the repo is mounted at /app after `composer install`.
 docker run --rm --network ai-writer-test -v "$PWD":/app -w /app \
-  -e DB_CONNECTION=mysql -e DB_HOST=ai-writer-mysql -e DB_DATABASE=suite -e DB_USERNAME=root -e DB_PASSWORD=secret \
+  -e AI_WRITER_TEST_DB_CONNECTION=mysql -e AI_WRITER_TEST_DB_HOST=ai-writer-mysql -e AI_WRITER_TEST_DB_DATABASE=suite -e AI_WRITER_TEST_DB_USERNAME=root -e AI_WRITER_TEST_DB_PASSWORD=secret \
   your-php-image vendor/bin/phpunit
-# PostgreSQL: -e DB_CONNECTION=pgsql -e DB_HOST=ai-writer-pg -e DB_DATABASE=suite -e DB_USERNAME=postgres -e DB_PASSWORD=secret
+# PostgreSQL: -e AI_WRITER_TEST_DB_CONNECTION=pgsql -e AI_WRITER_TEST_DB_HOST=ai-writer-pg -e AI_WRITER_TEST_DB_DATABASE=suite -e AI_WRITER_TEST_DB_USERNAME=postgres -e AI_WRITER_TEST_DB_PASSWORD=secret
 docker rm -f -v ai-writer-mysql ai-writer-pg && docker network rm ai-writer-test
 ```
 

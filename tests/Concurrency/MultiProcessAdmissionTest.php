@@ -22,8 +22,8 @@ class MultiProcessAdmissionTest extends TestCase
 
   protected function setUp(): void
   {
-    if (env('DB_CONNECTION', 'sqlite') === 'sqlite') {
-      $this->markTestSkipped('Multi-process admission probes need DB_CONNECTION=mysql or pgsql.');
+    if (env('AI_WRITER_TEST_DB_CONNECTION', 'sqlite') === 'sqlite') {
+      $this->markTestSkipped('Multi-process admission probes need AI_WRITER_TEST_DB_CONNECTION=mysql or pgsql.');
     }
     parent::setUp();
   }

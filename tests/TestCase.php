@@ -30,17 +30,17 @@ abstract class TestCase extends Orchestra
     ];
   }
 
-  /** SQLite :memory: unless DB_CONNECTION selects mysql or pgsql (the database is wiped by migrate:fresh). */
+  /** SQLite :memory: unless AI_WRITER_TEST_DB_CONNECTION selects mysql or pgsql (the database is wiped by migrate:fresh). */
   protected static function testConnection(): array
   {
-    $driver = env('DB_CONNECTION', 'sqlite');
-    $database = env('DB_DATABASE', ':memory:');
+    $driver = env('AI_WRITER_TEST_DB_CONNECTION', 'sqlite');
+    $database = env('AI_WRITER_TEST_DB_DATABASE', ':memory:');
     return match ($driver) {
       'sqlite' => ['driver' => 'sqlite', 'database' => $database, 'prefix' => '', 'foreign_key_constraints' => true],
-      'mysql' => ['driver' => 'mysql', 'host' => env('DB_HOST', '127.0.0.1'), 'port' => env('DB_PORT', 3306), 'database' => $database,
-        'username' => env('DB_USERNAME', 'root'), 'password' => env('DB_PASSWORD', ''), 'charset' => 'utf8mb4', 'collation' => 'utf8mb4_unicode_ci', 'prefix' => '', 'strict' => true],
-      'pgsql' => ['driver' => 'pgsql', 'host' => env('DB_HOST', '127.0.0.1'), 'port' => env('DB_PORT', 5432), 'database' => $database,
-        'username' => env('DB_USERNAME', 'postgres'), 'password' => env('DB_PASSWORD', ''), 'charset' => 'utf8', 'prefix' => '', 'schema' => 'public', 'sslmode' => 'prefer'],
+      'mysql' => ['driver' => 'mysql', 'host' => env('AI_WRITER_TEST_DB_HOST', '127.0.0.1'), 'port' => env('AI_WRITER_TEST_DB_PORT', 3306), 'database' => $database,
+        'username' => env('AI_WRITER_TEST_DB_USERNAME', 'root'), 'password' => env('AI_WRITER_TEST_DB_PASSWORD', ''), 'charset' => 'utf8mb4', 'collation' => 'utf8mb4_unicode_ci', 'prefix' => '', 'strict' => true],
+      'pgsql' => ['driver' => 'pgsql', 'host' => env('AI_WRITER_TEST_DB_HOST', '127.0.0.1'), 'port' => env('AI_WRITER_TEST_DB_PORT', 5432), 'database' => $database,
+        'username' => env('AI_WRITER_TEST_DB_USERNAME', 'postgres'), 'password' => env('AI_WRITER_TEST_DB_PASSWORD', ''), 'charset' => 'utf8', 'prefix' => '', 'schema' => 'public', 'sslmode' => 'prefer'],
       default => throw new \InvalidArgumentException("Unsupported test database driver [$driver]."),
     };
   }

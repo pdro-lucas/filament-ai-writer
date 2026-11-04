@@ -12,9 +12,7 @@
     <php>
         <env name="APP_ENV" value="testing" force="true"/>
         <env name="APP_KEY" value="base64:MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="/>
-        <!-- SQLite :memory: by default; export DB_CONNECTION=mysql|pgsql and DB_* to run against a real database (see the testing section of README.md). -->
-        <env name="DB_CONNECTION" value="sqlite"/>
-        <env name="DB_DATABASE" value=":memory:"/>
+        <!-- SQLite :memory: by default. Only the dedicated AI_WRITER_TEST_DB_* variables select MySQL or PostgreSQL (see the testing section of README.md), so a host DB_* environment can never point the suite at a real database. -->
         <env name="SESSION_DRIVER" value="array" force="true"/>
     </php>
 </phpunit>
