@@ -129,14 +129,17 @@ class AiWriterPlugin implements Plugin
 
   public static function get(): static
   {
+    return static::current()
+      ?? throw new LogicException('Register AiWriterPlugin::make() with ->plugin() in this panel\'s PanelProvider before using AiWriterAction.');
+  }
+
+  /** The plugin registered on the current panel, or null when AiWriterAction runs standalone. */
+  public static function current(): ?static
+  {
     $panel = Filament::getCurrentPanel();
     $plugin = $panel?->hasPlugin('ai-writer') ? $panel->getPlugin('ai-writer') : null;
 
-    if (!$plugin instanceof static) {
-      throw new LogicException('Register AiWriterPlugin::make() with ->plugin() in this panel\'s PanelProvider before using AiWriterAction.');
-    }
-
-    return $plugin;
+    return $plugin instanceof static ? $plugin : null;
   }
 
   public function generation(): Generation

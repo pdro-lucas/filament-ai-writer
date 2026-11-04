@@ -11,10 +11,10 @@ use Filament\Schemas\Components\Utilities\Set;
 use Filament\Schemas\Components\Utilities\Get;
 use Filament\Support\Colors\Color;
 use Illuminate\Support\Str;
-use LogicException;
 use PdroLucas\FilamentAiWriter\AiWriterPlugin;
 use PdroLucas\FilamentAiWriter\Data\GenerateResult;
 use PdroLucas\FilamentAiWriter\Exceptions\GenerationFailure;
+use PdroLucas\FilamentAiWriter\Generation\Generation;
 use PdroLucas\FilamentAiWriter\Events\AiTextGenerated;
 
 class AiWriterAction extends Action
@@ -213,19 +213,10 @@ class AiWriterAction extends Action
 
   protected function authorizeGeneration(): bool
   {
-    try {
-      $plugin = AiWriterPlugin::get();
-    } catch (LogicException $exception) {
-      Notification::make()
-        ->danger()
-        ->title("AI Writer is not configured")
-        ->body($exception->getMessage())
-        ->send();
+    // Without a registered plugin the action runs standalone, as in 0.7.1: only its own authorization applies.
+    $plugin = AiWriterPlugin::current();
 
-      return false;
-    }
-
-    if (!$plugin->canUseAi() || !$this->isAuthorized()) {
+    if (($plugin !== null && !$plugin->canUseAi()) || !$this->isAuthorized()) {
       Notification::make()
         ->warning()
         ->title("You are not authorized to use AI Writer")
@@ -306,7 +297,7 @@ class AiWriterAction extends Action
   protected function generateAndDeliver(string $prompt, string $input, Get $get, Set $set): void
   {
     $original = $get($this->targetField);
-    $result = AiWriterPlugin::get()->generation()->run($prompt, $input, function (GenerateResult $result) use ($set): void {
+    $result = app(Generation::class)->run($prompt, $input, function (GenerateResult $result) use ($set): void {
       $value = trim($result->text);
       if ($this->silent && !empty($this->valueMap)) {
         if (!array_key_exists($value, $this->valueMap)) {

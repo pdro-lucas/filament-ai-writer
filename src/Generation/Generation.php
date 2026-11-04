@@ -20,10 +20,14 @@ class Generation
   /** Context is resolved on the server. Restore must undo delivery if its final ledger write fails. */
   public function run(string $systemPrompt, string $userInput, Closure $deliver, Closure $restore, string $field, ?string $operationId = null, ?string $actionName = null): GenerateResult
   {
-    if (!AiWriterPlugin::get()->canUseAi()) {
+    $plugin = AiWriterPlugin::current();
+    if ($plugin === null) {
+      return $this->runCore($systemPrompt, $userInput, $deliver, $restore);
+    }
+    if (!$plugin->canUseAi()) {
       throw new AuthorizationException('You are not authorized to use AI Writer.');
     }
-    $admission = AiWriterPlugin::get()->controls()->admit();
+    $admission = $plugin->controls()->admit();
     $context = new GenerationContext($operationId ?? (string) \Illuminate\Support\Str::uuid(), $admission->panelId,
       $admission->actor->type, $admission->actor->id, $field, $actionName);
     $this->recorder->begin($context, $admission);
@@ -54,5 +58,27 @@ class Generation
       $this->recorder->failed($context, $failure, $quote);
       throw $failure;
     }
+  }
+
+  /** Standalone path: provider call and delivery only, without plugin storage. */
+  private function runCore(string $systemPrompt, string $userInput, Closure $deliver, Closure $restore): GenerateResult
+  {
+    try {
+      $result = app(AiProvider::class)->generate($systemPrompt, $userInput);
+    } catch (GenerationFailure $failure) {
+      throw $failure;
+    } catch (Throwable) {
+      throw new GenerationFailure('provider', outcomeUnknown: true);
+    }
+    if ($result->outcome !== GenerateResult::TEXT) {
+      throw new GenerationFailure($result->outcome, requestId: $result->requestId, responseId: $result->responseId, durationMs: $result->durationMs, result: $result);
+    }
+    try {
+      $deliver($result);
+    } catch (Throwable $error) {
+      $restore();
+      throw $error instanceof GenerationFailure ? $error : new GenerationFailure('delivery', result: $result);
+    }
+    return $result;
   }
 }

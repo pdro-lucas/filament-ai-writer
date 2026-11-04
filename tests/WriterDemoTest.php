@@ -65,21 +65,35 @@ class WriterDemoTest extends TestCase
   }
 
   #[DataProvider('generationModes')]
-  public function test_unregistered_panel_reports_configuration_guidance_without_calling_provider(string $action, string $field, array $data): void
+  public function test_standalone_action_generates_without_plugin_or_package_tables(string $action, string $field, array $data): void
   {
     $this->signIn();
-    Http::fake();
-    $page = Livewire::test(WriterDemo::class);
-    Filament::setCurrentPanel(Panel::make()->id('unregistered')->path('unregistered')->authGuard('web'));
+    // A 0.7.1 host: no plugin on the panel and no package migrations.
+    $this->artisan('migrate:reset', ['--path' => realpath(__DIR__ . '/../database/migrations'), '--realpath' => true])->assertSuccessful();
+    $this->assertSame([], array_filter(\Illuminate\Support\Facades\Schema::getTableListing(), fn (string $table): bool => str_contains($table, 'filament_ai_writer')));
+    Filament::setCurrentPanel(Panel::make()->id('unregistered')->path('unregistered')->authGuard('workbench'));
+    Event::fake([AiTextGenerated::class]);
+    Http::fake(['https://api.openai.com/v1/chat/completions' => Http::sequence()
+      ->push(['error' => ['message' => 'Unavailable']], 500)
+      ->push(['choices' => [['message' => ['content' => 'Standalone result.'], 'finish_reason' => 'stop']]])]);
+    $queries = [];
+    DB::listen(function ($query) use (&$queries): void {
+      $queries[] = $query->sql;
+    });
+
+    $page = Livewire::test(WriterDemo::class)
+      ->callAction(TestAction::make($action)->schemaComponent($field, 'form'), data: $data)
+      ->assertSet('data.' . $field, null)
+      ->assertNotified('AI generation was not delivered');
+    Event::assertNotDispatched(AiTextGenerated::class);
 
     $page->callAction(TestAction::make($action)->schemaComponent($field, 'form'), data: $data)
-      ->assertSet('data.' . $field, null)
-      ->assertNotified(Notification::make()
-        ->danger()
-        ->title('AI Writer is not configured')
-        ->body("Register AiWriterPlugin::make() with ->plugin() in this panel's PanelProvider before using AiWriterAction."));
+      ->assertSet('data.' . $field, 'Standalone result.')
+      ->assertNotified('Generated successfully');
 
-    Http::assertNothingSent();
+    Event::assertDispatched(AiTextGenerated::class, fn ($event) => $event->payload['field'] === $field && $event->payload['result'] === 'Standalone result.');
+    $this->assertSame([], array_values(array_filter($queries, fn (string $sql): bool => str_contains($sql, 'filament_ai_writer'))));
+    Http::assertSentCount(2);
   }
 
   #[DataProvider('revocationSources')]
