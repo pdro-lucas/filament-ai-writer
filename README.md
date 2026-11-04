@@ -15,7 +15,7 @@ Start with [installation](#installation), [panel registration](#panel-plugin) an
 
 - PHP 8.2+
 - Laravel 11.28+ or 12.x
-- Filament 4.x (Livewire 3) or 5.x (Livewire 4)
+- Filament 4.15.3+ (Livewire 3) or 5.x (Livewire 4)
 
 ## Installation
 
@@ -623,7 +623,7 @@ Tests bootstrap with `WithWorkbench`, use a separate SQLite `:memory:` connectio
 To check the other supported major without changing the manifest:
 
 ```bash
-composer update 'filament/*' livewire/livewire --with='filament/filament:^4.0' --with='livewire/livewire:^3.0' -W
+composer update 'filament/*' livewire/livewire --with='filament/filament:^4.15.3' --with='livewire/livewire:^3.0' -W
 composer workbench:build
 composer test
 # Restore the default latest compatible major:
