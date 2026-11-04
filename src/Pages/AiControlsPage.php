@@ -25,6 +25,7 @@ use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Validation\ValidationException;
 use Livewire\Attributes\Locked;
+use Livewire\Attributes\Url;
 use PdroLucas\FilamentAiWriter\AiWriterPlugin;
 use PdroLucas\FilamentAiWriter\Concerns\UsesPluginNavigation;
 use PdroLucas\FilamentAiWriter\Controls\ControlContext;
@@ -52,7 +53,8 @@ class AiControlsPage extends Page implements HasTable
   #[Locked]
   public array $controlSnapshot;
 
-  #[Locked]
+  /** Bound to the URL (?section=) so a section opens from a link, survives a reload and follows the browser's back button. */
+  #[Url(as: 'section', history: true)]
   public string $section = 'settings';
 
   #[Locked]
@@ -73,9 +75,39 @@ class AiControlsPage extends Page implements HasTable
     return $plugin->isControlsEnabled() && $plugin->canManage();
   }
 
+  /**
+   * The sections of this page, in display order, as key => label. Override it in a subclass to remove or reorder sections;
+   * a removed section cannot be opened from the URL. Known keys: settings, users, activity.
+   *
+   * @return array<string, string>
+   */
+  protected function sections(): array
+  {
+    return ['settings' => __('Settings'), 'users' => __('Users'), 'activity' => __('Activity')];
+  }
+
+  /** Sections this administrator can open now: Users also needs a configured actor directory (and usersTab()). */
+  protected function availableSections(): array
+  {
+    $sections = $this->sections();
+    if (!AiWriterPlugin::get()->hasUsersTab()) {
+      unset($sections['users']);
+    }
+    return $sections;
+  }
+
+  protected function defaultSection(): string
+  {
+    return (string) (array_key_first($this->availableSections()) ?? 'settings');
+  }
+
   public function mount(): void
   {
     abort_unless(static::canAccess(), 403);
+    // A URL value that is unknown, removed or not allowed falls back to the default section.
+    if (!array_key_exists($this->section, $this->availableSections())) {
+      $this->section = $this->defaultSection();
+    }
     $this->controlSnapshot = AiWriterPlugin::get()->controlContext()->snapshot();
     $this->fillSettings();
   }
@@ -88,7 +120,7 @@ class AiControlsPage extends Page implements HasTable
   protected function context(): ControlContext
   {
     abort_unless(static::canAccess(), 403);
-    abort_unless($this->section !== 'users' || AiWriterPlugin::get()->hasUsersTab(), 403);
+    abort_unless(array_key_exists($this->section, $this->availableSections()), 403);
     $context = AiWriterPlugin::get()->controlContext();
     abort_unless($context->snapshot() === $this->controlSnapshot, 403);
     return $context;
@@ -119,13 +151,36 @@ class AiControlsPage extends Page implements HasTable
   public function showSection(string $section): void
   {
     $this->context();
-    abort_unless(in_array($section, ['settings', 'users', 'activity'], true), 404);
-    abort_unless($section !== 'users' || AiWriterPlugin::get()->hasUsersTab(), 403);
+    abort_unless(array_key_exists($section, $this->sections()), 404);
+    abort_unless(array_key_exists($section, $this->availableSections()), 403);
+    $this->leaveSection();
+    $this->section = $section;
+    $this->enterSection();
+  }
+
+  /** Runs when the client sets the URL-bound property (browser back/forward): same checks as showSection(). */
+  public function updatingSection(mixed $section): void
+  {
+    $this->context();
+    abort_unless(is_string($section) && array_key_exists($section, $this->availableSections()), 403);
+    $this->leaveSection();
+  }
+
+  public function updatedSection(): void
+  {
+    $this->enterSection();
+  }
+
+  protected function leaveSection(): void
+  {
     $this->taskTableState[$this->section] = ['search' => $this->tableSearch, 'sort' => $this->tableSort,
       'perPage' => $this->getTableRecordsPerPage(), 'page' => $this->getTablePage()];
     if ($this->mountedActions !== []) { $this->unmountAction(cancelParentActions: true); }
-    $this->section = $section;
-    $state = $this->taskTableState[$section] ?? [];
+  }
+
+  protected function enterSection(): void
+  {
+    $state = $this->taskTableState[$this->section] ?? [];
     $this->tableSearch = $state['search'] ?? '';
     $this->tableSort = $state['sort'] ?? null;
     $this->tableRecordsPerPage = $state['perPage'] ?? 10;
@@ -437,6 +492,6 @@ class AiControlsPage extends Page implements HasTable
   protected function getViewData(): array
   {
     $this->context();
-    return ['hasUsersTab' => AiWriterPlugin::get()->hasUsersTab()];
+    return ['sections' => $this->availableSections()];
   }
 }

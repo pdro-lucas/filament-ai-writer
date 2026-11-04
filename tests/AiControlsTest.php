@@ -282,14 +282,26 @@ class AiControlsTest extends TestCase
     $this->assertCount(50, $page->instance()->getTableRecords());
     $page->call('showSection', 'activity')->assertCountTableRecords(12);
     $this->assertSame(2, $page->instance()->getTablePage());
+    // A section opens from the URL; unknown ones fall back to the default section.
+    $controls = \PdroLucas\FilamentAiWriter\Pages\AiControlsPage::class;
+    \Livewire\Livewire::withQueryParams(['section' => 'users'])->test($controls)->assertSet('section', 'users');
+    \Livewire\Livewire::withQueryParams(['section' => 'activity'])->test($controls)->assertSet('section', 'activity');
+    \Livewire\Livewire::withQueryParams(['section' => 'bogus'])->test($controls)->assertSet('section', 'settings');
+    // A subclass changes the list and order; a removed section cannot be opened through the URL or by forging the property.
+    $reordered = \PdroLucas\FilamentAiWriter\Tests\Fixtures\ReorderedControlsPage::class;
+    \Livewire\Livewire::test($reordered)->assertSet('section', 'activity')->assertDontSee('showSection(\'users\')', false);
+    \Livewire\Livewire::withQueryParams(['section' => 'users'])->test($reordered)->assertSet('section', 'activity');
+    \Livewire\Livewire::test($reordered)->set('section', 'users')->assertForbidden();
     $plugin->usersTab(false);
     $page = \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\AiControlsPage::class)->assertDontSee('wire:click="showSection(\'users\')"', false)
       ->call('showSection', 'activity')->assertCountTableRecords(12);
     $page->call('showSection', 'users')->assertForbidden();
     \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\AiControlsPage::class)
       ->mountAction(TestAction::make('manageAiUser')->table('forged'))->assertActionNotMounted();
-    $this->expectException(\Livewire\Features\SupportLockedProperties\CannotUpdateLockedPropertyException::class);
-    \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\AiControlsPage::class)->set('section', 'users');
+    // The section is URL-bound, so it is not locked: every client-side change is re-authorized on the server.
+    \Livewire\Livewire::withQueryParams(['section' => 'users'])->test($controls)->assertSet('section', 'settings');
+    \Livewire\Livewire::test($controls)->set('section', 'users')->assertForbidden();
+    \Livewire\Livewire::test($controls)->set('section', 'bogus')->assertForbidden();
   }
 
   public function test_host_action_authenticates_child_purpose_component_and_frozen_context(): void
