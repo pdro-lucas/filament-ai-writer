@@ -59,7 +59,7 @@ trait UsesPluginNavigation
     return $group ?? parent::getNavigationGroup() ?? (filled(static::getCluster()) ? null : __('filament-ai-writer::navigation.group'));
   }
 
-  public static function getNavigationLabel(): string|Htmlable
+  public static function getNavigationLabel(): string
   {
     return static::pluginNavigation('label') ?? static::$navigationLabel ?? static::$title ?? __('filament-ai-writer::navigation.' . static::pluginPage());
   }
