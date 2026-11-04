@@ -270,7 +270,7 @@ class UsageStatistics
         continue;
       }
       if (!is_string($value) || !preg_match('/^\d{4}-\d{2}-\d{2}$/D', $value)) {
-        throw ValidationException::withMessages(['period' => 'Use a valid date in YYYY-MM-DD format.']);
+        throw ValidationException::withMessages(['period' => __('filament-ai-writer::statistics.validation.date_format')]);
       }
       try {
         $date = CarbonImmutable::createFromFormat('!Y-m-d', $value, config('app.timezone', 'UTC'));
@@ -278,7 +278,7 @@ class UsageStatistics
           throw new \InvalidArgumentException();
         }
       } catch (\Exception) {
-        throw ValidationException::withMessages(['period' => 'Use a valid calendar date.']);
+        throw ValidationException::withMessages(['period' => __('filament-ai-writer::statistics.validation.date')]);
       }
       $query->where('started_at', $boundary === 'from' ? '>=' : '<', ($boundary === 'from' ? $date : $date->addDay())->utc());
     }

@@ -4,6 +4,7 @@ namespace PdroLucas\FilamentAiWriter\Exceptions;
 
 use Carbon\CarbonInterface;
 use PdroLucas\FilamentAiWriter\Data\GenerateResult;
+use PdroLucas\FilamentAiWriter\Support\HostDates;
 use RuntimeException;
 
 final class GenerationFailure extends RuntimeException
@@ -64,11 +65,9 @@ final class GenerationFailure extends RuntimeException
   public function detail(): string
   {
     if ($this->failureCode === 'credits' && $this->renewsAt !== null) {
-      return __('Your AI credits are exhausted. They renew on :date.', [
-        'date' => $this->renewsAt->setTimezone(config('app.timezone'))->format('M j, Y · H:i T'),
-      ]);
+      return __('filament-ai-writer::failures.credits_renew', ['date' => HostDates::dateTime($this->renewsAt)]);
     }
 
-    return __(self::MESSAGES[$this->failureCode]);
+    return __('filament-ai-writer::failures.messages.' . $this->failureCode);
   }
 }

@@ -47,7 +47,7 @@ class AiWriterAction extends Action
       ->label("")
       ->icon(Icons::resolve(Icons::ACTION))
       ->color(Color::Fuchsia)
-      ->tooltip("Generate with AI");
+      ->tooltip(__('filament-ai-writer::writer.label'));
   }
 
   public function targetField(string $field): static
@@ -140,9 +140,9 @@ class AiWriterAction extends Action
   {
     parent::setUp();
 
-    $this->modalHeading(fn() => $this->silent ? null : "Generate with AI")
-      ->modalDescription(fn() => $this->silent ? null : "Describe what you want to write.")
-      ->modalSubmitAction(fn($action) => $action->color("primary")->label($this->silent ? "" : "Generate"))
+    $this->modalHeading(fn() => $this->silent ? null : __('filament-ai-writer::writer.label'))
+      ->modalDescription(fn() => $this->silent ? null : __('filament-ai-writer::writer.modal.description'))
+      ->modalSubmitAction(fn($action) => $action->color("primary")->label($this->silent ? "" : __('filament-ai-writer::writer.modal.submit')))
       ->successNotification(null)
       ->form(function (): array {
         if ($this->silent) {
@@ -151,8 +151,8 @@ class AiWriterAction extends Action
 
         $fields = [
           Textarea::make("ai_input")
-            ->label("What do you want to write?")
-            ->placeholder("Briefly describe...")
+            ->label(__('filament-ai-writer::writer.input.label'))
+            ->placeholder(__('filament-ai-writer::writer.input.placeholder'))
             ->required()
             ->minLength(10)
             ->rows(4)
@@ -162,32 +162,22 @@ class AiWriterAction extends Action
 
         if ($this->showToneControl) {
           $fields[] = Select::make("ai_tone")
-            ->label("Tone")
-            ->options([
-              "professional" => "Professional",
-              "casual" => "Casual",
-              "formal" => "Formal",
-              "friendly" => "Friendly",
-              "persuasive" => "Persuasive",
-            ])
-            ->placeholder("Default")
+            ->label(__('filament-ai-writer::writer.tone.label'))
+            ->options(collect(["professional", "casual", "formal", "friendly", "persuasive"])->mapWithKeys(fn (string $tone) => [$tone => __('filament-ai-writer::writer.tone.' . $tone)])->all())
+            ->placeholder(__('filament-ai-writer::writer.tone.default'))
             ->native(false);
         }
 
         if ($this->showLengthControl) {
           $fields[] = Select::make("ai_length")
-            ->label("Length")
-            ->options([
-              "short" => "Short",
-              "medium" => "Medium",
-              "long" => "Long",
-            ])
-            ->placeholder("Default")
+            ->label(__('filament-ai-writer::writer.length.label'))
+            ->options(collect(["short", "medium", "long"])->mapWithKeys(fn (string $length) => [$length => __('filament-ai-writer::writer.length.' . $length)])->all())
+            ->placeholder(__('filament-ai-writer::writer.tone.default'))
             ->native(false);
         }
 
         if ($this->showEmojiControl) {
-          $fields[] = Toggle::make("ai_emojis")->label("Use emojis")->default(false);
+          $fields[] = Toggle::make("ai_emojis")->label(__('filament-ai-writer::writer.emojis.label'))->default(false);
         }
 
         return $fields;
@@ -221,7 +211,7 @@ class AiWriterAction extends Action
     if (($plugin !== null && !$plugin->canUseAi()) || !$this->isAuthorized()) {
       Notification::make()
         ->warning()
-        ->title("You are not authorized to use AI Writer")
+        ->title(__('filament-ai-writer::failures.unauthorized'))
         ->send();
 
       return false;
@@ -327,9 +317,9 @@ class AiWriterAction extends Action
     if (!empty($missingFields)) {
       Notification::make()
         ->warning()
-        ->title("Missing context")
+        ->title(__('filament-ai-writer::writer.missing.title'))
         ->color("warning")
-        ->body("Fill in the following fields first: " . implode(", ", $missingFields))
+        ->body(__('filament-ai-writer::writer.missing.body', ['fields' => implode(', ', $missingFields)]))
         ->send();
       return;
     }
@@ -431,6 +421,6 @@ class AiWriterAction extends Action
 
   protected function notifyGenerationSuccess(): void
   {
-    Notification::make()->success()->title("Generated successfully")->color("success")->send();
+    Notification::make()->success()->title(__('filament-ai-writer::writer.success'))->color("success")->send();
   }
 }

@@ -98,7 +98,7 @@ final class Controls
     // Even a previously selected actor must still be manageable in this context.
     $resolved = AiWriterPlugin::get()->resolveActor($actor->token(), $context);
     if ($resolved === null) {
-      throw ValidationException::withMessages(['actor' => 'Select an available user.']);
+      throw ValidationException::withMessages(['actor' => __('filament-ai-writer::controls.validation.actor')]);
     }
     $this->change($context, 'block', $resolved, $blocked, $reason);
   }

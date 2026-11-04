@@ -5,6 +5,7 @@ namespace PdroLucas\FilamentAiWriter\Widgets;
 use Filament\Widgets\ChartWidget;
 use Illuminate\Contracts\Support\Htmlable;
 use Illuminate\Contracts\View\View;
+use PdroLucas\FilamentAiWriter\Support\HostDates;
 use PdroLucas\FilamentAiWriter\Widgets\Concerns\ReadsUsageStatistics;
 
 class UsageCountChart extends ChartWidget
@@ -33,7 +34,7 @@ class UsageCountChart extends ChartWidget
     $charts = $this->chartRows();
 
     return view('filament-ai-writer::usage-chart-data', [
-      'rows' => $charts['time'], 'bucketDays' => $charts['bucket_days'], 'timezone' => config('app.timezone', 'UTC'),
+      'rows' => array_map(fn (array $row): array => ['label' => $this->bucketLabel($row['label'])] + $row, $charts['time']), 'bucketDays' => $charts['bucket_days'], 'timezone' => HostDates::timezone(),
     ]);
   }
 
@@ -47,9 +48,9 @@ class UsageCountChart extends ChartWidget
   {
     $rows = $this->chartRows()['time'];
     return [
-      'labels' => array_column($rows, 'label'),
+      'labels' => array_map(fn (array $row): string => $this->bucketLabel($row['label']), $rows),
       'datasets' => [[
-        'label' => __('Requests'),
+        'label' => __('filament-ai-writer::statistics.chart.series'),
         'data' => array_map(fn (array $row): int => $row['delivered'] + $row['failed'] + $row['active'], $rows),
         'borderWidth' => 0, 'borderRadius' => 2, 'maxBarThickness' => 48,
       ]],
@@ -59,12 +60,12 @@ class UsageCountChart extends ChartWidget
   public function getHeading(): string
   {
     $this->authorizeContext();
-    return __('Requests over time');
+    return __('filament-ai-writer::statistics.chart.heading');
   }
 
   public function getDescription(): string
   {
-    return $this->chartRows()['bucket_days'] . '-day buckets · ' . config('app.timezone', 'UTC');
+    return __('filament-ai-writer::statistics.chart.description', ['days' => $this->chartRows()['bucket_days'], 'timezone' => HostDates::timezone()]);
   }
 
   protected function getType(): string

@@ -149,7 +149,7 @@ class AiWriterPlugin implements Plugin
       return [];
     }
     if (mb_strlen($search) > 100 || !mb_check_encoding($search, 'UTF-8')) {
-      throw ValidationException::withMessages(['actor' => 'Search must contain at most 100 characters.']);
+      throw ValidationException::withMessages(['actor' => __('filament-ai-writer::controls.validation.search_length')]);
     }
     $results = ($this->actorSearch)($search, $context->scope, $this->panel);
     if (!is_iterable($results)) {

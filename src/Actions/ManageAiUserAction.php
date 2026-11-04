@@ -41,10 +41,10 @@ class ManageAiUserAction extends Action
   protected function setUp(): void
   {
     parent::setUp();
-    $this->label('Manage AI')->modalWidth('2xl')
+    $this->label(__('filament-ai-writer::controls.user.manage'))->modalWidth('2xl')
       ->authorize(fn (): bool => AiWriterPlugin::get()->canManage())
       ->modalHeading(fn (): string => $this->actorLabel())
-      ->modalSubmitAction(false)->modalCancelActionLabel('Close')
+      ->modalSubmitAction(false)->modalCancelActionLabel(__('filament-ai-writer::controls.user.close'))
       ->schema(fn (): array => $this->statusComponents())
       ->mountUsing(function (?Schema $schema): void {
         $plugin = AiWriterPlugin::get();
@@ -63,7 +63,7 @@ class ManageAiUserAction extends Action
 
   protected function unavailable(ValidationException $exception): never
   {
-    Notification::make()->danger()->title('User unavailable')->body('Try again or close this dialog.')->send();
+    Notification::make()->danger()->title(__('filament-ai-writer::controls.user.unavailable'))->body(__('filament-ai-writer::controls.user.unavailable_body'))->send();
     throw $exception;
   }
 
@@ -85,12 +85,12 @@ class ManageAiUserAction extends Action
   protected function actorLabel(): string
   {
     // Native schema/modal discovery can happen before mount. No target data may be read then.
-    if (!isset($this->getArguments()['aiConfirmation'])) { return 'User'; }
+    if (!isset($this->getArguments()['aiConfirmation'])) { return __('filament-ai-writer::controls.user.user'); }
     try {
       [, $actor] = $this->target();
       return $actor->label !== '' ? $actor->label : $actor->id;
     } catch (ValidationException) {
-      return 'User unavailable';
+      return __('filament-ai-writer::controls.user.unavailable');
     }
   }
 
@@ -112,25 +112,25 @@ class ManageAiUserAction extends Action
   {
     try {
       $status = $this->snapshot();
-      return $status === null ? [Section::make('Access')->contained(false)] : AiCreditStatus::components($status['balance'], $status['abuse'], $status['availability']);
+      return $status === null ? [Section::make(__('filament-ai-writer::credits.status.access'))->contained(false)] : AiCreditStatus::components($status['balance'], $status['abuse'], $status['availability']);
     } catch (ValidationException) {
-      return [Section::make('User unavailable')->contained(false)->description('Close and search again.')];
+      return [Section::make(__('filament-ai-writer::controls.user.unavailable'))->contained(false)->description(__('filament-ai-writer::controls.user.unavailable_section'))];
     }
   }
 
   protected function userActions(): array
   {
     return [
-      $this->userAction('block', 'Block user', 'Prevent new AI generations. Already admitted generations can finish.')->color('danger')
+      $this->userAction('block', __('filament-ai-writer::controls.user.block'), __('filament-ai-writer::controls.user.block_description'))->color('danger')
         ->visible(fn (): bool => $this->hasStatus(fn (array $status): bool => !$status['availability']['blocked'])),
-      $this->userAction('unblock', 'Unblock user', 'Restore access to new generations, subject to credits and protections.')
+      $this->userAction('unblock', __('filament-ai-writer::controls.user.unblock'), __('filament-ai-writer::controls.user.unblock_description'))
         ->visible(fn (): bool => $this->hasStatus(fn (array $status): bool => $status['availability']['blocked'])),
-      $this->userAction('limit', 'Edit individual limit', 'Set an individual limit. Consumption and reservations are preserved.'),
-      $this->userAction('restoreLimit', 'Restore default limit', 'Use the current workspace limit. Consumption and reservations are preserved.')
+      $this->userAction('limit', __('filament-ai-writer::controls.user.limit'), __('filament-ai-writer::controls.user.limit_description')),
+      $this->userAction('restoreLimit', __('filament-ai-writer::controls.user.restore_limit'), __('filament-ai-writer::controls.user.restore_limit_description'))
         ->visible(fn (): bool => $this->hasStatus(fn (array $status): bool => $status['balance']['individual_limit'] !== null)),
-      $this->userAction('extra', 'Give extra credits', 'Add credits to this period only. Unused extras do not carry over.')
+      $this->userAction('extra', __('filament-ai-writer::controls.user.extra'), __('filament-ai-writer::controls.user.extra_description'))
         ->visible(fn (): bool => $this->hasStatus(fn (array $status): bool => $status['balance']['limit'] !== null)),
-      $this->userAction('resetPeriod', 'Reset user period', 'Clear this user’s consumed and extra credits for the current period. In-flight generations settle against their original balance.')
+      $this->userAction('resetPeriod', __('filament-ai-writer::controls.user.reset'), __('filament-ai-writer::controls.user.reset_description'))
         ->color('danger')->visible(fn (): bool => $this->hasStatus(fn (array $status): bool => $status['balance']['limit'] !== null)),
     ];
   }
@@ -144,8 +144,8 @@ class ManageAiUserAction extends Action
   protected function userAction(string $operation, string $label, string $description): Action
   {
     $fields = match ($operation) {
-      'limit' => [ControlFields::integerField('limit', 'Individual limit (credits)', 0)->required()],
-      'extra' => [ControlFields::integerField('amount', 'Extra credits', 1)->required()],
+      'limit' => [ControlFields::integerField('limit', __('filament-ai-writer::controls.user.limit_field'), 0)->required()],
+      'extra' => [ControlFields::integerField('amount', __('filament-ai-writer::controls.user.extra_field'), 1)->required()],
       default => [],
     };
     return Action::make($operation)->label($label)->modalHeading(function (Action $action) use ($operation, $label): string {
@@ -153,7 +153,7 @@ class ManageAiUserAction extends Action
       try {
         [, $actor] = ActorConfirmation::open($action->getArguments()['aiConfirmation'], $this->purpose($operation), $this->componentId());
         return $label . ': ' . ($actor->label !== '' ? $actor->label : $actor->id);
-      } catch (ValidationException) { return $label . ': User unavailable'; }
+      } catch (ValidationException) { return $label . ': ' . __('filament-ai-writer::controls.user.unavailable'); }
     })->modalDescription($description)->modalSubmitActionLabel($label)
       ->modal(fn (): bool => in_array($operation, ['block', 'limit', 'extra'], true) || Reason::isRequired(self::AUDITED[$operation]))
       ->schema([...$fields, ControlFields::reasonField(self::AUDITED[$operation])])
@@ -181,10 +181,10 @@ class ManageAiUserAction extends Action
           };
           $this->statusSnapshot = null;
           $this->getLivewire()->dispatch('ai-writer-credits-changed');
-          Notification::make()->success()->title('AI controls updated')->send();
+          Notification::make()->success()->title(__('filament-ai-writer::controls.updated'))->send();
         } catch (ValidationException|AuthorizationException|HttpException $exception) { throw $exception; }
         catch (Throwable) {
-          Notification::make()->danger()->title('AI controls could not be updated')->body('No change was saved. Please try again or contact support.')->send();
+          Notification::make()->danger()->title(__('filament-ai-writer::controls.update_failed.title'))->body(__('filament-ai-writer::controls.update_failed.body'))->send();
         }
       });
   }

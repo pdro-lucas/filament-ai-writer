@@ -160,6 +160,28 @@ class UsageStatisticsTest extends TestCase
     }
   }
 
+  public function test_statistics_follow_the_host_locale_date_format_timezone_and_currency(): void
+  {
+    $this->login();
+    $id = $this->row('demo', ['started_at' => '2026-10-21 12:00:00', 'cost_usd' => '0.100000000001', 'cost_source' => 'provider']);
+    // The host owns locale, date format, timezone (also per user) and currency; the plugin fixes none of them.
+    $this->app->setLocale('pt_BR');
+    \Filament\Support\Facades\FilamentTimezone::set('America/Sao_Paulo');
+    \Filament\Tables\Table::configureUsing(fn (\Filament\Tables\Table $table) => $table->defaultDateTimeDisplayFormat('d/m/Y H:i'));
+    \Filament\Schemas\Schema::configureUsing(fn (\Filament\Schemas\Schema $schema) => $schema->defaultDateTimeDisplayFormat('d/m/Y H:i')->defaultDateDisplayFormat('d/m/Y'));
+    config(['filament-ai-writer.currency' => ['code' => 'BRL', 'symbol' => 'R$ ']]);
+
+    \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\UsageStatisticsPage::class)
+      ->assertSee('21/10/2026 09:00')->assertSee('Custo · BRL')->assertDontSee('USD');
+    // The request drawer writes its date as text, with the same host format and timezone.
+    $started = collect(\PdroLucas\FilamentAiWriter\Schemas\UsageAttemptDetails::components(\PdroLucas\FilamentAiWriter\Models\UsageAttempt::query()->findOrFail($id)))
+      ->flatMap(fn ($section) => $section->getDefaultChildComponents())->first(fn ($entry) => $entry->getName() === 'started');
+    $this->assertSame('21/10/2026 09:00 · America/Sao_Paulo', $started->getState());
+    \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Widgets\UsageOverviewStats::class)
+      ->assertSee('Visão geral do uso')->assertSee('R$ 0.100000000001')->assertSee('Solicitações')->assertSee('Custos · BRL')
+      ->assertDontSee('Usage overview')->assertDontSee('Requests');
+  }
+
   public function test_metric_widgets_register_on_any_dashboard_and_follow_the_statistics_permission(): void
   {
     $this->login();
@@ -192,7 +214,7 @@ class UsageStatisticsTest extends TestCase
     $this->row('demo', ['started_at' => \Carbon\CarbonImmutable::now('UTC')->toDateTimeString()]);
     $chart = \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Widgets\UsageCountChart::class, ['panelId' => 'demo']);
     // The screen-reader table carries the same buckets as the bars.
-    $chart->assertSee('Request counts by date · 1-day buckets · UTC')->assertSeeHtml('<th scope="row">' . \Carbon\CarbonImmutable::now(config('app.timezone'))->format('Y-m-d') . '</th><td>1</td>');
+    $chart->assertSee('Request counts by date · 1-day buckets · UTC')->assertSeeHtml('<th scope="row">' . \Carbon\CarbonImmutable::now(config('app.timezone'))->format('M j, Y') . '</th><td>1</td>');
     preg_match("/options:\\s*JSON\\.parse\\('([^']+)'\\)/", html_entity_decode($chart->html(), ENT_QUOTES), $matches);
     $this->assertNotEmpty($matches, 'The widget must send options to the Filament chart component.');
     $options = json_decode(json_decode('"' . $matches[1] . '"', true, 512, JSON_THROW_ON_ERROR), true, 512, JSON_THROW_ON_ERROR);

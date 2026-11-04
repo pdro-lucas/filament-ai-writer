@@ -50,7 +50,7 @@ final class ActorConfirmation
     try {
       $actor = $identity();
       if (!$actor instanceof ActorIdentity) {
-        throw ValidationException::withMessages(['actor' => 'The application must provide a valid user identity.']);
+        throw ValidationException::withMessages(['actor' => __('filament-ai-writer::controls.validation.actor_identity')]);
       }
       $resolved = $plugin->resolveActor($actor->token(), $context);
     } catch (Throwable $exception) {
@@ -58,10 +58,10 @@ final class ActorConfirmation
         || ($exception instanceof HttpException && in_array($exception->getStatusCode(), [401, 403], true))) {
         throw $exception;
       }
-      throw ValidationException::withMessages(['actor' => 'The user directory is unavailable. Please try again or contact your application administrator.']);
+      throw ValidationException::withMessages(['actor' => __('filament-ai-writer::controls.validation.directory_unavailable')]);
     }
     if ($resolved === null) {
-      throw ValidationException::withMessages(['actor' => 'This user is no longer available. Close this dialog and select an available user.']);
+      throw ValidationException::withMessages(['actor' => __('filament-ai-writer::controls.validation.actor_gone')]);
     }
     return $resolved;
   }

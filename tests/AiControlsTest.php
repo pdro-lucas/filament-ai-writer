@@ -551,6 +551,28 @@ class AiControlsTest extends TestCase
     finally { \Illuminate\Support\Facades\Schema::rename('unavailable_policies', 'filament_ai_writer_policies'); }
   }
 
+  public function test_controls_popover_and_action_speak_the_host_locale_and_date_format(): void
+  {
+    $this->login();
+    $plugin = AiWriterPlugin::get();
+    $context = $plugin->controlContext();
+    $plugin->credits()->configure($context, true, 5, 'daily', 'Start');
+    $this->app->setLocale('pt_BR');
+    \Filament\Support\Facades\FilamentTimezone::set('America/Sao_Paulo');
+    \Filament\Schemas\Schema::configureUsing(fn (\Filament\Schemas\Schema $schema) => $schema->defaultDateTimeDisplayFormat('d/m/Y H:i'));
+    $renewal = \Carbon\CarbonImmutable::parse($plugin->credits()->ownBalance($context)['renews_at'], 'UTC')->setTimezone('America/Sao_Paulo')->format('d/m/Y H:i');
+
+    \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Livewire\OwnCreditsIndicator::class)
+      ->assertSee('5 créditos')->assertSee('Próxima renovação')->assertSee($renewal)->assertSee('Ver detalhes')
+      ->assertDontSee('Used this period')->assertDontSee('Next renewal');
+    \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\AiControlsPage::class)
+      ->assertSee('Controles do AI Writer')->assertSee('Disponibilidade')->assertSee('Salvar configurações de créditos')->assertSee($renewal)
+      ->assertDontSee('Availability')->assertDontSee('Save credit settings')->assertDontSee('Settings');
+    \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\MyAiCreditsPage::class)
+      ->assertSee('Meus créditos de IA')->assertSee('Créditos disponíveis')->assertSee($renewal)->assertDontSee('Available credits');
+    $this->assertSame('Gerar com IA', \PdroLucas\FilamentAiWriter\Actions\AiWriterAction::make()->getTooltip());
+  }
+
   public function test_topbar_is_panel_scoped_permission_gated_opt_out_and_snapshot_fenced(): void
   {
     Filament::setCurrentPanel(Filament::getPanel('demo'));
@@ -799,7 +821,7 @@ class AiControlsTest extends TestCase
       $plugin->generation()->run('prompt', 'input', fn () => $this->fail('Exhausted'), fn () => null, 'content');
       $this->fail('Must deny exhausted quota');
     } catch (GenerationFailure $failure) {
-      $renewal = \Carbon\CarbonImmutable::parse($credits->ownBalance($context)['renews_at'], 'UTC')->setTimezone(config('app.timezone'))->format('M j, Y · H:i T');
+      $renewal = \Carbon\CarbonImmutable::parse($credits->ownBalance($context)['renews_at'], 'UTC')->setTimezone(config('app.timezone'))->format('M j, Y H:i:s');
       $this->assertSame("Your AI credits are exhausted. They renew on {$renewal}.", $failure->detail());
     }
     $credits->configure($context, true, 1, 'manual', 'Start quota');
@@ -1039,7 +1061,7 @@ class AiControlsTest extends TestCase
       $this->assertLessThan($status['failures']['paused_until'], $status['failures']['retry_at']);
       config(['app.timezone' => 'America/Sao_Paulo']);
       \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\MyAiCreditsPage::class)
-        ->assertSee(\Carbon\CarbonImmutable::parse($status['failures']['retry_at'], 'UTC')->setTimezone('America/Sao_Paulo')->format('M j, Y · H:i T'));
+        ->assertSee(\Carbon\CarbonImmutable::parse($status['failures']['retry_at'], 'UTC')->setTimezone('America/Sao_Paulo')->format('M j, Y H:i:s'));
       \Carbon\CarbonImmutable::setTestNow($clock->addSeconds(102));
       $this->assertSame(1, $plugin->abuse()->ownStatus($context)['failures']['count']);
       $this->assertNull($plugin->abuse()->ownStatus($context)['refusal']);

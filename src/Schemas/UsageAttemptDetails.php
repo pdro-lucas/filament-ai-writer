@@ -4,61 +4,67 @@ namespace PdroLucas\FilamentAiWriter\Schemas;
 
 use Filament\Infolists\Components\TextEntry;
 use Filament\Schemas\Components\Section;
-use Illuminate\Support\Str;
 use PdroLucas\FilamentAiWriter\Models\UsageAttempt;
+use PdroLucas\FilamentAiWriter\Support\Currency;
+use PdroLucas\FilamentAiWriter\Support\HostDates;
 
 /** Metadata-only detail of one request, built from native schema components. */
 final class UsageAttemptDetails
 {
   /** @return array<int, \Filament\Schemas\Components\Component> */
-  public static function components(UsageAttempt $attempt, string $timezone): array
+  public static function components(UsageAttempt $attempt): array
   {
-    $unavailable = __('Unavailable');
-    $source = match ($attempt->cost_source) { 'provider' => __('Provider-reported'), 'estimated' => __('Estimated'), default => $unavailable };
-    $result = match ($attempt->status) { 'delivered' => __('Success'), 'failed' => __('Failure'), default => __('In progress') };
+    $t = fn (string $key, array $replace = []): string => __('filament-ai-writer::statistics.' . $key, $replace);
+    $currency = ['currency' => Currency::code()];
+    $unavailable = $t('table.unavailable');
+    $source = match ($attempt->cost_source) { 'provider' => $t('source.provider'), 'estimated' => $t('source.estimated'), default => $t('source.none') };
+    $result = match ($attempt->status) { 'delivered' => $t('status.delivered'), 'failed' => $t('status.failed'), default => $t('status.active') };
     $summary = [
-      __('Input → output tokens') => ($attempt->input_tokens ?? $unavailable) . ' → ' . ($attempt->output_tokens ?? $unavailable),
-      __('Cost · USD') => ($attempt->cost_usd !== null ? rtrim(rtrim($attempt->cost_usd, '0'), '.') : $unavailable) . ' · ' . $source,
-      __('HTTP duration') => $attempt->duration_ms !== null ? number_format($attempt->duration_ms / 1000, 2) . ' s' : $unavailable,
+      'tokens' => [$t('details.tokens'), ($attempt->input_tokens ?? $unavailable) . ' → ' . ($attempt->output_tokens ?? $unavailable)],
+      'cost' => [$t('details.cost', $currency), ($attempt->cost_usd !== null ? Currency::format($attempt->cost_usd) : $unavailable) . ' · ' . $source],
+      'http_duration' => [$t('details.http_duration'), $attempt->duration_ms !== null ? number_format($attempt->duration_ms / 1000, 2) . ' s' : $unavailable],
     ];
+    // key => [value, always shown]. A missing value is hidden unless the field is one of the essential ones.
     $groups = [
-      __('Request') => [
-        'Started' => $attempt->started_at->setTimezone($timezone)->format('Y-m-d H:i:s') . ' · ' . $timezone,
-        'User ID' => $attempt->actor_id, 'User type' => $attempt->actor_type,
-        'Provider' => $attempt->provider, 'Actual model' => $attempt->model, 'Requested model' => $attempt->requested_model,
-        'Field' => $attempt->field, 'Action' => $attempt->action_name,
+      'request' => [
+        'started' => [HostDates::dateTime($attempt->started_at) . ' · ' . HostDates::timezone(), false],
+        'user_id' => [$attempt->actor_id, false], 'user_type' => [$attempt->actor_type, false],
+        'provider' => [$attempt->provider, true], 'actual_model' => [$attempt->model, true], 'requested_model' => [$attempt->requested_model, false],
+        'field' => [$attempt->field, false], 'action' => [$attempt->action_name, false],
       ],
-      __('Consumption & cost') => [
-        'Input tokens' => $attempt->input_tokens, 'Output tokens' => $attempt->output_tokens,
-        'Cached input¹' => $attempt->cached_input_tokens, 'Cache write input¹' => $attempt->cache_write_input_tokens,
-        'Reasoning output¹' => $attempt->reasoning_output_tokens,
-        'Exact cost · USD' => $attempt->cost_usd, 'Cost source' => $source,
-        'Input tariff · USD / 1M' => $attempt->input_rate_usd_per_million, 'Output tariff · USD / 1M' => $attempt->output_rate_usd_per_million,
-        'HTTP duration · ms' => $attempt->duration_ms, 'Local overhead · ms' => $attempt->local_duration_ms,
+      'consumption' => [
+        'input_tokens' => [$attempt->input_tokens, true], 'output_tokens' => [$attempt->output_tokens, true],
+        'cached_input' => [$attempt->cached_input_tokens, false], 'cache_write' => [$attempt->cache_write_input_tokens, false],
+        'reasoning' => [$attempt->reasoning_output_tokens, false],
+        'exact_cost' => [$attempt->cost_usd, true], 'cost_source' => [$source, false],
+        'input_rate' => [$attempt->input_rate_usd_per_million, false], 'output_rate' => [$attempt->output_rate_usd_per_million, false],
+        'http_ms' => [$attempt->duration_ms, true], 'local_ms' => [$attempt->local_duration_ms, false],
       ],
-      __('Identifiers & outcome') => [
-        'Operation ID' => $attempt->operation_id, 'Attempt' => $attempt->attempt_number,
-        'Request ID' => $attempt->request_id, 'Response ID' => $attempt->response_id,
-        'Outcome' => $attempt->outcome, 'Finish reason' => $attempt->finish_reason,
-        'HTTP status' => $attempt->http_status, 'Failure code' => $attempt->failure_code,
-        'Remote outcome' => $attempt->outcome_unknown ? 'Unknown' : null,
+      'identifiers' => [
+        'operation_id' => [$attempt->operation_id, false], 'attempt' => [$attempt->attempt_number, false],
+        'request_id' => [$attempt->request_id, false], 'response_id' => [$attempt->response_id, false],
+        'outcome' => [$attempt->outcome, false], 'finish_reason' => [$attempt->finish_reason, false],
+        'http_status' => [$attempt->http_status, false], 'failure_code' => [$attempt->failure_code, false],
+        'remote_outcome' => [$attempt->outcome_unknown ? $t('details.unknown') : null, false],
       ],
     ];
-    $alwaysShown = ['Actual model', 'Provider', 'Input tokens', 'Output tokens', 'Exact cost · USD', 'HTTP duration · ms'];
-    $entry = static fn (string $label, mixed $value): TextEntry => TextEntry::make(Str::slug($label, '_'))->label(__($label))->state((string) ($value ?? $unavailable))->copyable(false);
+    $entry = static fn (string $key, string $label, mixed $value): TextEntry => TextEntry::make($key)->label($label)->state((string) ($value ?? $unavailable));
 
     $components = [
-      Section::make(($attempt->model ?? __('Unknown model')) . ' · ' . ($attempt->provider ?? __('Unknown provider')) . ' · ' . $result)
-        ->schema(array_map(fn (string $label, string $value): TextEntry => $entry('summary ' . $label, $value)->label($label), array_keys($summary), $summary))
+      Section::make(($attempt->model ?? $t('details.unknown_model')) . ' · ' . ($attempt->provider ?? $t('details.unknown_provider')) . ' · ' . $result)
+        ->schema(array_values(array_map(fn (string $key, array $row): TextEntry => $entry('summary_' . $key, $row[0], $row[1]), array_keys($summary), $summary)))
         ->columns(3),
     ];
-    foreach ($groups as $title => $fields) {
-      $components[] = Section::make($title)->columns(2)->schema(array_values(array_map(
-        fn (string $label): TextEntry => $entry($label, $fields[$label]),
-        array_keys(array_filter($fields, fn ($value, string $label): bool => $value !== null || in_array($label, $alwaysShown, true), ARRAY_FILTER_USE_BOTH)),
-      )));
+    foreach ($groups as $group => $fields) {
+      $entries = [];
+      foreach ($fields as $key => [$value, $always]) {
+        if ($value !== null || $always) {
+          $entries[] = $entry($key, $t('details.field.' . $key, $currency), $value);
+        }
+      }
+      $components[] = Section::make($t('details.group.' . $group))->columns(2)->schema($entries);
     }
-    $components[] = Section::make()->schema([TextEntry::make('footnote')->hiddenLabel()->state(__('¹ Included in input/output totals when measured; do not add again. Metadata only.'))]);
+    $components[] = Section::make()->schema([TextEntry::make('footnote')->hiddenLabel()->state($t('details.footnote'))]);
 
     return $components;
   }

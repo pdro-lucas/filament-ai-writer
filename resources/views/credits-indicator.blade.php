@@ -12,7 +12,7 @@
         </x-filament::button>
       </x-slot>
 
-      <x-filament::dropdown.header :icon="$icon">{{ __('My AI credits') }}</x-filament::dropdown.header>
+      <x-filament::dropdown.header :icon="$icon">{{ __('filament-ai-writer::credits.popover.heading') }}</x-filament::dropdown.header>
 
       <x-filament::dropdown.list>
         @foreach ($details as $name => $value)
@@ -24,7 +24,7 @@
 
       @if ($url !== null)
         <x-filament::dropdown.list>
-          <x-filament::dropdown.list.item tag="a" :href="$url" :icon="\PdroLucas\FilamentAiWriter\Support\Icons::resolve(\PdroLucas\FilamentAiWriter\Support\Icons::INDICATOR_LINK)">{{ __('View details') }}</x-filament::dropdown.list.item>
+          <x-filament::dropdown.list.item tag="a" :href="$url" :icon="\PdroLucas\FilamentAiWriter\Support\Icons::resolve(\PdroLucas\FilamentAiWriter\Support\Icons::INDICATOR_LINK)">{{ __('filament-ai-writer::credits.popover.view') }}</x-filament::dropdown.list.item>
         </x-filament::dropdown.list>
       @endif
     </x-filament::dropdown>

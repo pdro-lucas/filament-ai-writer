@@ -2,7 +2,6 @@
 
 namespace PdroLucas\FilamentAiWriter\Livewire;
 
-use Carbon\CarbonImmutable;
 use Filament\Facades\Filament;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Contracts\View\View;
@@ -12,6 +11,7 @@ use Livewire\Component;
 use PdroLucas\FilamentAiWriter\AiWriterPlugin;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 use Throwable;
+use PdroLucas\FilamentAiWriter\Support\HostDates;
 use PdroLucas\FilamentAiWriter\Support\Icons;
 
 class OwnCreditsIndicator extends Component
@@ -51,7 +51,7 @@ class OwnCreditsIndicator extends Component
       if (!$plugin->isControlsEnabled() || !$plugin->hasCreditsIndicator() || !$plugin->canUseAi()) {
         return view('filament-ai-writer::credits-indicator', $hidden);
       }
-      $state = ['visible' => true, 'label' => 'Credits unavailable', 'tooltip' => 'Credits unavailable. Try again later.', 'url' => null, 'details' => [],
+      $state = ['visible' => true, 'label' => __('filament-ai-writer::credits.indicator.unavailable'), 'tooltip' => __('filament-ai-writer::credits.indicator.unavailable_tooltip'), 'url' => null, 'details' => [],
         'icon' => $plugin->getCreditsIndicatorIcon(), 'color' => $plugin->getCreditsIndicatorColor()];
       if ($this->contextSnapshot === null) {
         return view('filament-ai-writer::credits-indicator', $state);
@@ -67,17 +67,16 @@ class OwnCreditsIndicator extends Component
       $plugin->abuse()->ownStatus($context);
       $balance = $plugin->credits()->ownBalance($context);
       if (!$balance['enabled']) {
-        $state['label'] = 'Unlimited';
-        $state['tooltip'] = 'Credits are off';
+        $state['label'] = __('filament-ai-writer::credits.indicator.unlimited');
+        $state['tooltip'] = __('filament-ai-writer::credits.indicator.off');
       } elseif ($balance['available'] !== null) {
-        $state['label'] = $plugin->getCreditsIndicatorLabel($balance) ?? number_format($balance['available']) . ' credits';
-        $state['tooltip'] = 'Your available AI credits';
+        $state['label'] = $plugin->getCreditsIndicatorLabel($balance) ?? __('filament-ai-writer::credits.indicator.label', ['count' => number_format($balance['available'])]);
+        $state['tooltip'] = __('filament-ai-writer::credits.indicator.tooltip');
         // Own balance only: the popover reads the same target-free snapshot as the label, never another actor's.
         $state['details'] = [
-          'Available' => number_format($balance['available']) . ' credits',
-          'Used this period' => number_format($balance['consumed']) . ' of ' . number_format($balance['limit']) . ' credits',
-          'Next renewal' => $balance['renews_at'] === null ? 'Manual renewal'
-            : CarbonImmutable::parse($balance['renews_at'], 'UTC')->setTimezone(config('app.timezone'))->format('M j, Y · H:i T'),
+          __('filament-ai-writer::credits.popover.available') => __('filament-ai-writer::credits.popover.credits', ['count' => number_format($balance['available'])]),
+          __('filament-ai-writer::credits.popover.used') => __('filament-ai-writer::credits.popover.used_value', ['used' => number_format($balance['consumed']), 'limit' => number_format($balance['limit'])]),
+          __('filament-ai-writer::credits.popover.renewal') => $balance['renews_at'] === null ? __('filament-ai-writer::credits.popover.manual') : HostDates::dateTime($balance['renews_at']),
         ];
       } else {
         return view('filament-ai-writer::credits-indicator', $state);
@@ -88,7 +87,7 @@ class OwnCreditsIndicator extends Component
       $state = $hidden;
     } catch (Throwable) {
       if ($state['visible']) {
-        $state = ['visible' => true, 'label' => 'Credits unavailable', 'tooltip' => 'Credits unavailable. Try again later.', 'url' => null, 'details' => [],
+        $state = ['visible' => true, 'label' => __('filament-ai-writer::credits.indicator.unavailable'), 'tooltip' => __('filament-ai-writer::credits.indicator.unavailable_tooltip'), 'url' => null, 'details' => [],
           'icon' => $state['icon'], 'color' => $state['color']];
       }
     }

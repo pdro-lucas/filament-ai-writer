@@ -281,7 +281,7 @@ final class Credits
   {
     $this->integer($limit);
     if (!in_array($renewal, ['manual', 'daily', 'weekly', 'monthly'], true)) {
-      throw ValidationException::withMessages(['renewal' => 'Select a valid renewal calendar.']);
+      throw ValidationException::withMessages(['renewal' => __('filament-ai-writer::controls.validation.renewal')]);
     }
     $this->admin($context, null, 'quota_policy', $reason, function ($policy) use ($enabled, $limit, $renewal): void {
       // Close an elapsed old period before scheduling the new calendar.
@@ -321,7 +321,7 @@ final class Credits
       $this->validPolicy($policy);
       $balance = $this->currentBalance($policy, $actor);
       if ((int) $balance->extras > self::MAX_CREDITS - $amount) {
-        throw ValidationException::withMessages(['amount' => 'Credits exceed the supported integer range.']);
+        throw ValidationException::withMessages(['amount' => __('filament-ai-writer::controls.validation.credits_range')]);
       }
       $this->table('credit_balances')->where('id', $balance->id)->increment('extras', $amount);
     });
@@ -370,7 +370,7 @@ final class Credits
   {
     AiWriterPlugin::get()->controlsService()->authorize($context);
     if (AiWriterPlugin::get()->resolveActor($actor->token(), $context) === null) {
-      throw ValidationException::withMessages(['actor' => 'Select an available user.']);
+      throw ValidationException::withMessages(['actor' => __('filament-ai-writer::controls.validation.actor')]);
     }
   }
 
@@ -421,7 +421,7 @@ final class Credits
   private function integer(mixed $value, int $min = 0): void
   {
     if (!is_int($value) || $value < $min || $value > self::MAX_CREDITS) {
-      throw ValidationException::withMessages(['credits' => 'Enter an integer between ' . $min . ' and ' . self::MAX_CREDITS . '.']);
+      throw ValidationException::withMessages(['credits' => __('filament-ai-writer::controls.validation.credits_integer', ['min' => $min, 'max' => self::MAX_CREDITS])]);
     }
   }
 

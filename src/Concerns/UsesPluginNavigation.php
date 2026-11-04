@@ -56,12 +56,17 @@ trait UsesPluginNavigation
     }
 
     // The built-in group is a default for loose pages only; a cluster already is their parent.
-    return $group ?? parent::getNavigationGroup() ?? (filled(static::getCluster()) ? null : __('AI Writer'));
+    return $group ?? parent::getNavigationGroup() ?? (filled(static::getCluster()) ? null : __('filament-ai-writer::navigation.group'));
   }
 
   public static function getNavigationLabel(): string|Htmlable
   {
-    return static::pluginNavigation('label') ?? parent::getNavigationLabel();
+    return static::pluginNavigation('label') ?? static::$navigationLabel ?? static::$title ?? __('filament-ai-writer::navigation.' . static::pluginPage());
+  }
+
+  public function getTitle(): string|Htmlable
+  {
+    return static::$title ?? __('filament-ai-writer::navigation.' . static::pluginPage());
   }
 
   public static function getNavigationIcon(): string|BackedEnum|Htmlable|null

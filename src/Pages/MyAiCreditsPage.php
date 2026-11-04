@@ -12,7 +12,7 @@ class MyAiCreditsPage extends Page
 {
   use UsesPluginNavigation;
 
-  protected static ?string $title = 'My AI credits';
+  protected static ?string $title = null;
   protected static ?string $slug = 'my-ai-credits';
 
   protected static function pluginPage(): string

@@ -22,12 +22,12 @@ final class Reason
     $reason = trim((string) $reason);
     if ($reason === '') {
       if (self::isRequired($action)) {
-        throw ValidationException::withMessages(['reason' => __('Enter a reason of at most 500 characters.')]);
+        throw ValidationException::withMessages(['reason' => __('filament-ai-writer::controls.reason.invalid')]);
       }
       return null;
     }
     if (mb_strlen($reason) > 500 || !mb_check_encoding($reason, 'UTF-8') || preg_match('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/', $reason)) {
-      throw ValidationException::withMessages(['reason' => __('Enter a reason of at most 500 characters.')]);
+      throw ValidationException::withMessages(['reason' => __('filament-ai-writer::controls.reason.invalid')]);
     }
     return $reason;
   }

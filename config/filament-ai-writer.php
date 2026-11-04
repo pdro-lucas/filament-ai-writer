@@ -4,6 +4,8 @@ return [
   "connection" => null,
   "tables" => ["usage" => "filament_ai_writer_usage"],
   "pricing" => [],
+  // Shown on cost labels and values. Nothing is converted: set it only when your pricing rates use that currency.
+  "currency" => ["code" => env("AI_WRITER_CURRENCY", "USD"), "symbol" => env("AI_WRITER_CURRENCY_SYMBOL")],
   "recovery" => ["margin_seconds" => 30],
   "retention" => [
     "days" => env("AI_WRITER_RETENTION_DAYS"),

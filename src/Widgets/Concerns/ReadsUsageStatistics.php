@@ -6,6 +6,7 @@ use Carbon\CarbonImmutable;
 use Filament\Facades\Filament;
 use Livewire\Attributes\Locked;
 use PdroLucas\FilamentAiWriter\AiWriterPlugin;
+use PdroLucas\FilamentAiWriter\Support\HostDates;
 use PdroLucas\FilamentAiWriter\Usage\UsageStatistics;
 
 /** Shared access rules for the usage widgets: Statistics permission, panel fence and default period. */
@@ -53,11 +54,20 @@ trait ReadsUsageStatistics
     return ['period' => ['from' => $today->subDays(6)->toDateString(), 'until' => $today->toDateString()]];
   }
 
+  /** Computed once per request: the chart, its description and its screen-reader table all read the same rows. */
+  protected ?array $usageSummaryCache = null;
+
   /** @return array<string, mixed> */
   protected function usageSummary(): array
   {
     $this->authorizeContext();
 
-    return AiWriterPlugin::get()->statistics()->dashboard($this->usageFilters());
+    return $this->usageSummaryCache ??= AiWriterPlugin::get()->statistics()->dashboard($this->usageFilters());
+  }
+
+  /** Bucket labels come from the service as ISO days ("2026-10-01" or "2026-10-01 – 2026-10-03"); they are shown in the host's date format. */
+  protected function bucketLabel(string $label): string
+  {
+    return implode(' – ', array_map(fn (string $day): string => HostDates::date($day), explode(' – ', $label)));
   }
 }

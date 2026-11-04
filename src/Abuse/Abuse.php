@@ -46,7 +46,7 @@ final class Abuse
     AiWriterPlugin::get()->controlsService()->authorize($context);
     $reason = Reason::resolve('abuse_policy', $reason);
     if (array_diff(array_keys($settings), self::FIELDS)) {
-      throw ValidationException::withMessages(['abuse' => 'Unknown protection setting.']);
+      throw ValidationException::withMessages(['abuse' => __('filament-ai-writer::controls.validation.abuse_unknown')]);
     }
     $this->locked($context, function ($policy) use ($context, $settings, $reason): void {
       AiWriterPlugin::get()->controlsService()->authorize($context);
@@ -85,7 +85,7 @@ final class Abuse
       $plugin = AiWriterPlugin::get();
       $plugin->controlsService()->authorize($context);
       if ($plugin->resolveActor($actor->token(), $context) === null) {
-        throw ValidationException::withMessages(['actor' => 'Select an available user.']);
+        throw ValidationException::withMessages(['actor' => __('filament-ai-writer::controls.validation.actor')]);
       }
     };
     $authorize();
@@ -133,14 +133,14 @@ final class Abuse
   {
     foreach ($settings as $field => $value) {
       if (str_ends_with($field, '_enabled') ? !is_bool($value) : ($value !== null && (!is_int($value) || $value < 1 || $value > Credits::MAX_CREDITS))) {
-        throw ValidationException::withMessages([$field => 'Use a boolean flag or a positive integer threshold within the supported range.']);
+        throw ValidationException::withMessages([$field => __('filament-ai-writer::controls.validation.threshold')]);
       }
     }
     foreach (['rate' => ['rate_limit', 'rate_window_seconds'], 'concurrency' => ['concurrency_limit'],
       'failure' => ['failure_limit', 'failure_window_seconds', 'failure_pause_seconds']] as $kind => $required) {
       foreach ($required as $field) {
         if ($settings[$kind . '_enabled'] && $settings[$field] === null) {
-          throw ValidationException::withMessages([$field => 'Configure this threshold before enabling protection.']);
+          throw ValidationException::withMessages([$field => __('filament-ai-writer::controls.validation.threshold_missing')]);
         }
       }
     }

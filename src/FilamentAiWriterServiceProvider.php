@@ -35,6 +35,12 @@ class FilamentAiWriterServiceProvider extends ServiceProvider
     }
 
     $this->loadViewsFrom(__DIR__ . "/../resources/views", "filament-ai-writer");
+    // A translation published by the host (lang/vendor/filament-ai-writer) always wins over the package's.
+    $this->loadTranslationsFrom(__DIR__ . "/../resources/lang", "filament-ai-writer");
+
+    $this->publishes([
+      __DIR__ . '/../resources/lang' => $this->app->langPath('vendor/filament-ai-writer'),
+    ], 'filament-ai-writer-translations');
 
     $this->publishes([
       __DIR__ . '/../resources/views' => resource_path('views/vendor/filament-ai-writer'),

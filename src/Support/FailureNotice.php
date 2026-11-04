@@ -28,11 +28,11 @@ final class FailureNotice
         'outcome_unknown' => $failure->outcomeUnknown,
       ]);
       $body = self::canSeeDetail()
-        ? __(':detail (Reference: :reference)', ['detail' => $body, 'reference' => $reference])
-        : __('AI is unavailable right now. Try again later or contact your administrator and mention reference :reference.', ['reference' => $reference]);
+        ? __('filament-ai-writer::failures.with_reference', ['detail' => $body, 'reference' => $reference])
+        : __('filament-ai-writer::failures.generic', ['reference' => $reference]);
     }
 
-    Notification::make()->warning()->title(__('AI generation was not delivered'))->body($body)->send();
+    Notification::make()->warning()->title(__('filament-ai-writer::failures.title'))->body($body)->send();
   }
 
   /**
