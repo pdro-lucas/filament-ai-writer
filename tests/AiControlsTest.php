@@ -177,7 +177,7 @@ class AiControlsTest extends TestCase
   {
     $this->login();
     $panel = \Filament\Panel::make()->id('no-directory')->authGuard('workbench')->plugin(
-      AiWriterPlugin::make()->authorizeManageUsing(fn () => true));
+      AiWriterPlugin::make()->usageTracking()->authorizeManageUsing(fn () => true));
     Filament::setCurrentPanel($panel);
     $plugin = AiWriterPlugin::get();
     $context = $plugin->controlContext();

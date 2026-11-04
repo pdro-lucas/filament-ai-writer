@@ -64,15 +64,17 @@ class PluginAuthorizationTest extends TestCase
   {
     $controls = (new class extends \PdroLucas\FilamentAiWriter\Pages\AiControlsPage {})::class;
     $credits = (new class extends \PdroLucas\FilamentAiWriter\Pages\MyAiCreditsPage {})::class;
-    $plugin = AiWriterPlugin::make()->controlsPage($controls)->creditsPage($credits);
+    $plugin = AiWriterPlugin::make()->usageTracking()->controlsPage($controls)->creditsPage($credits);
     $customPanel = Panel::make()->id('custom-pages')->plugin($plugin);
     $this->assertContains($controls, $customPanel->getPages());
     $this->assertContains($credits, $customPanel->getPages());
     $this->assertSame($credits, $plugin->getCreditsPage());
     $plugin->creditsInTopbar(false);
     $this->assertFalse($plugin->hasCreditsInTopbar());
-    $defaultPanel = Panel::make()->id('default-pages')->plugin(AiWriterPlugin::make());
+    $defaultPanel = Panel::make()->id('default-pages')->plugin(AiWriterPlugin::make()->usageTracking(fn (Panel $panel): bool => $panel->getId() === 'default-pages'));
     $this->assertContains(\PdroLucas\FilamentAiWriter\Pages\AiControlsPage::class, $defaultPanel->getPages());
+    $this->assertContains(\PdroLucas\FilamentAiWriter\Pages\UsageStatisticsPage::class, $defaultPanel->getPages());
+    $this->assertSame([], Panel::make()->id('core-only')->plugin(AiWriterPlugin::make())->getPages());
     $this->assertNotContains($controls, $defaultPanel->getPages());
     $this->assertTrue($defaultPanel->getPlugin('ai-writer')->hasCreditsInTopbar());
     foreach (['controlsPage', 'creditsPage'] as $method) {

@@ -30,6 +30,8 @@ class DemoPanelProvider extends PanelProvider
       ->authGuard('workbench')
       ->login()
       ->plugin(AiWriterPlugin::make()
+        // The demo shows every module; tests may switch it off before the panel registers.
+        ->usageTracking(fn (): bool => (bool) config('workbench.usage_tracking', true))
         ->authorizeViewStatisticsUsing(fn () => true)
         ->authorizeManageUsing(fn ($actor): bool => $actor instanceof User && $actor->email === 'demo@example.test')
         // This directory belongs to the demo host; the plugin never queries its User model.

@@ -10,6 +10,7 @@ use PdroLucas\FilamentAiWriter\Actions\AiWriterAction;
 use PdroLucas\FilamentAiWriter\AiWriterPlugin;
 use PdroLucas\FilamentAiWriter\Tests\Fixtures\ArrayWriterPage;
 use PHPUnit\Framework\Attributes\DataProvider;
+use Orchestra\Testbench\Attributes\DefineEnvironment;
 use Illuminate\Foundation\Testing\DatabaseMigrations;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
@@ -94,6 +95,39 @@ class WriterDemoTest extends TestCase
     Event::assertDispatched(AiTextGenerated::class, fn ($event) => $event->payload['field'] === $field && $event->payload['result'] === 'Standalone result.');
     $this->assertSame([], array_values(array_filter($queries, fn (string $sql): bool => str_contains($sql, 'filament_ai_writer'))));
     Http::assertSentCount(2);
+    // Maintenance commands stay safe to schedule before the optional storage exists.
+    $this->artisan('ai-writer:prune-usage', ['--days' => 90])->expectsOutputToContain('not installed')->assertSuccessful();
+    $this->artisan('ai-writer:recover-operations')->expectsOutputToContain('not installed')->assertSuccessful();
+  }
+
+  #[DefineEnvironment('withoutUsageTracking')]
+  public function test_registered_plugin_without_modules_has_no_statistics_route_and_skips_plugin_storage(): void
+  {
+    $this->signIn();
+    $queries = [];
+    DB::listen(function ($query) use (&$queries): void {
+      $queries[] = $query->sql;
+    });
+    Http::fake(['https://api.openai.com/v1/chat/completions' => Http::response([
+      'choices' => [['message' => ['content' => 'Core result.'], 'finish_reason' => 'stop']],
+    ])]);
+
+    $this->get('/demo/ai-writer-usage')->assertNotFound();
+    $this->get('/demo/ai-writer-controls')->assertNotFound();
+    $this->get('/demo/writer-demo')->assertOk();
+    Livewire::test(WriterDemo::class)
+      ->callAction(TestAction::make('ai_writer')->schemaComponent('content', 'form'))
+      ->assertSet('data.content', 'Core result.');
+
+    $this->assertSame([], array_values(array_filter($queries, fn (string $sql): bool => str_contains($sql, 'filament_ai_writer'))));
+    AiWriterPlugin::get()->authorizeUseAiUsing(fn () => false);
+    $this->expectException(\Illuminate\Auth\Access\AuthorizationException::class);
+    AiWriterPlugin::get()->generation()->run('prompt', 'input', fn () => $this->fail('Denied use must not deliver'), fn () => null, 'content');
+  }
+
+  protected function withoutUsageTracking($app): void
+  {
+    $app['config']->set('workbench.usage_tracking', false);
   }
 
   #[DataProvider('revocationSources')]

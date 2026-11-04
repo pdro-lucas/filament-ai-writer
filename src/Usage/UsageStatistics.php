@@ -17,7 +17,7 @@ class UsageStatistics
   {
     $panel = Filament::getCurrentPanel();
     $plugin = $panel?->hasPlugin('ai-writer') ? $panel->getPlugin('ai-writer') : null;
-    return $plugin instanceof AiWriterPlugin && $plugin->canViewStatistics()
+    return $plugin instanceof AiWriterPlugin && $plugin->isUsageTrackingEnabled() && $plugin->canViewStatistics()
       && (!($panel->auth()->user() instanceof FilamentUser) || $panel->auth()->user()->canAccessPanel($panel));
   }
 

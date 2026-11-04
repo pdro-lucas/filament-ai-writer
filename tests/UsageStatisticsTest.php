@@ -244,7 +244,7 @@ class UsageStatisticsTest extends TestCase
       $actor->shouldReceive('canAccessPanel')->andReturn(false);
       $this->actingAs($actor, 'workbench');
     } elseif ($change === 'panel') {
-      Filament::setCurrentPanel(\Filament\Panel::make()->id('another')->authGuard('workbench')->plugin(AiWriterPlugin::make()->authorizeViewStatisticsUsing(fn () => true)));
+      Filament::setCurrentPanel(\Filament\Panel::make()->id('another')->authGuard('workbench')->plugin(AiWriterPlugin::make()->usageTracking()->authorizeViewStatisticsUsing(fn () => true)));
     } else {
       AiWriterPlugin::get()->authorizeViewStatisticsUsing(fn () => false);
     }
@@ -261,7 +261,7 @@ class UsageStatisticsTest extends TestCase
   {
     $this->seed(DatabaseSeeder::class);
     $this->actingAs(User::firstOrFail(), 'workbench');
-    foreach ([AiWriterPlugin::make(), null] as $plugin) {
+    foreach ([AiWriterPlugin::make()->usageTracking(), null] as $plugin) {
       $panel = \Filament\Panel::make()->id('restricted')->authGuard('workbench');
       if ($plugin !== null) {
         $panel->plugin($plugin);

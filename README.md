@@ -23,7 +23,7 @@ Start with [installation](#installation), [panel registration](#panel-plugin) an
 composer require pdro-lucas/filament-ai-writer
 ```
 
-The Laravel service provider is auto-discovered. Register the plugin explicitly in each panel and install its usage and controls tables before generating:
+The Laravel service provider is auto-discovered. `AiWriterAction` works on its own: without registering the plugin and without migrations, it calls the configured provider and fills the field. Register the plugin to add permissions and opt-in modules. Install the package tables only when you enable [usage tracking](#optional-modules):
 
 ```bash
 php artisan vendor:publish --tag=filament-ai-writer-migrations
@@ -66,7 +66,7 @@ If you need to customize the full configuration, publish the config file:
 php artisan vendor:publish --tag=filament-ai-writer
 ```
 
-This creates `config/filament-ai-writer.php` in your project where you can set per-provider models, API keys, and token limits. Publishing configuration is optional when using the default table name and no host tariffs; publishing/running the migration is required.
+This creates `config/filament-ai-writer.php` in your project where you can set per-provider models, API keys, and token limits. Publishing configuration is optional when using the default table name and no host tariffs; publishing and running the migrations is required only for usage tracking.
 
 ## Panel plugin
 
@@ -90,9 +90,20 @@ $panel->plugin(
 
 Callbacks receive the authenticated actor from that panel's guard and the panel itself. No User class, roles, columns or key type are required. Guests are denied. Authenticated actors may use AI by default; statistics and administration are denied unless their independent callbacks allow them. `AiWriterPlugin::get()` resolves the plugin on the current panel.
 
-The action enforces registration, the panel's use permission and any host action-level authorization on the server before running generation hooks or contacting the provider. Interactive and silent actions use the same checks. Permissions are checked again on later requests, including submission of a modal opened before permission was revoked. A host `->authorize(true)` cannot bypass plugin authorization; host action authorization can further restrict access.
+When the plugin is registered, the action enforces the panel's use permission and any host action-level authorization on the server before running generation hooks or contacting the provider. Interactive and silent actions use the same checks. Permissions are checked again on later requests, including submission of a modal opened before permission was revoked. A host `->authorize(true)` cannot bypass plugin authorization; host action authorization can further restrict access.
 
 These callbacks can use permissions managed by **Filament Shield / Spatie Laravel Permission**, or host rules based on roles, user types and plans. See the [Shield and business-rule examples](docs/integration.md#filament-shield-roles-and-business-rules) for custom permissions, role assignment, Gate callbacks, guards and Super Admin behavior. Neither permission package is a dependency of AI Writer.
+
+### Optional modules
+
+A registered plugin with no modules behaves like the standalone action: no pages, routes or render hooks, and no package table is read. Enable modules per panel:
+
+```php
+AiWriterPlugin::make()
+    ->usageTracking(); // or ->usageTracking(fn (Panel $panel): bool => ...)
+```
+
+`usageTracking()` records each generation in the metadata-only usage ledger, deduplicates and fences operations, and registers the **AI Writer usage** statistics page (still gated by `authorizeViewStatisticsUsing()`). It requires all four package migrations (`000001`–`000004`): operations live in the credits migration, and until controls get their own switch, credits, abuse protection and the Controls and My AI credits pages are enabled together with usage tracking. The closure receives the panel and is evaluated when the panel registers, so it decides which routes exist. With the module off, `ai-writer:prune-usage` and `ai-writer:recover-operations` succeed without changes when the tables are not installed.
 
 ## Controls, credits and integration
 
@@ -132,9 +143,9 @@ The [integration guide](docs/integration.md) provides:
 
 ### Upgrading an existing installation
 
-Register the plugin in every panel that uses writer actions. Service-provider discovery does not register a panel plugin. Remove temporary `authorize()` or `beforeGenerate()` callbacks that only duplicated plugin checks; retain application-specific restrictions. Actions outside a current Filament panel are unsupported.
+Writer actions keep working without the plugin. Register it in each panel that needs permissions, and add `usageTracking()` where you need usage history, credits or controls. Service-provider discovery does not register a panel plugin. Remove temporary `authorize()` or `beforeGenerate()` callbacks that only duplicated plugin checks; retain application-specific restrictions. Actions outside a current Filament panel are unsupported.
 
-Publish **new** migrations and run them before generating. The package never migrates automatically and requires no host user-table changes. Missing controls storage or a failing scope resolver refuses generation rather than bypassing stored policy.
+With `usageTracking()` enabled, publish **new** migrations and run them before generating. The package never migrates automatically and requires no host user-table changes. Missing controls storage or a failing scope resolver refuses generation rather than bypassing stored policy.
 
 For existing installations, migrations `000003` (credits) and `000004` (abuse) require a coordinated source/schema cutover. Pause admissions, recovery workers and pruning; drain old pending/received operations and stop old writers before migrating and deploying the new writers. Mixed-version rolling deployment is unsupported. Follow the [cutover details](docs/integration.md#credits-deployment-and-recovery) before resuming traffic.
 

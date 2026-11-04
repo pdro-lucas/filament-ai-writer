@@ -6,6 +6,7 @@ use Closure;
 use Filament\Contracts\Plugin;
 use Filament\Facades\Filament;
 use Filament\Panel;
+use Filament\Support\Concerns\EvaluatesClosures;
 use LogicException;
 use PdroLucas\FilamentAiWriter\Generation\Generation;
 use PdroLucas\FilamentAiWriter\Usage\UsageStatistics;
@@ -13,7 +14,11 @@ use PdroLucas\FilamentAiWriter\Pages\UsageStatisticsPage;
 
 class AiWriterPlugin implements Plugin
 {
+  use EvaluatesClosures;
+
   protected ?Panel $panel = null;
+
+  protected bool|Closure $usageTracking = false;
 
   protected ?Closure $useAiAuthorization = null;
   protected ?Closure $viewStatisticsAuthorization = null;
@@ -220,7 +225,15 @@ class AiWriterPlugin implements Plugin
     }
 
     $this->panel = $panel;
-    $panel->pages([UsageStatisticsPage::class, $this->controlsPage, $this->creditsPage]);
+    if (!$this->isUsageTrackingEnabled()) {
+      // Core only: no pages, routes or render hooks, and no package table is read.
+      return;
+    }
+    $panel->pages([UsageStatisticsPage::class]);
+    if (!$this->hasControlsSurface()) {
+      return;
+    }
+    $panel->pages([$this->controlsPage, $this->creditsPage]);
     $panel->renderHook(\Filament\View\PanelsRenderHook::USER_MENU_BEFORE, function () use ($panel) {
       if (Filament::getCurrentPanel() !== $panel || !$this->hasCreditsInTopbar()) { return ''; }
       try { if (!$this->canUseAi()) { return ''; } }
@@ -230,6 +243,27 @@ class AiWriterPlugin implements Plugin
   }
 
   public function boot(Panel $panel): void {}
+
+  /** Usage ledger, operation deduplication/recovery and the Statistics page. Evaluated with the panel; page routes use its value at registration. */
+  public function usageTracking(bool|Closure $condition = true): static
+  {
+    $this->usageTracking = $condition;
+    return $this;
+  }
+
+  public function isUsageTrackingEnabled(): bool
+  {
+    return (bool) $this->evaluate($this->usageTracking, ['panel' => $this->panel], [Panel::class => $this->panel]);
+  }
+
+  /**
+   * Temporary: credits, abuse protection and the Controls surfaces share the operation lifecycle with the ledger,
+   * so they follow usageTracking until they get their own module switch.
+   */
+  private function hasControlsSurface(): bool
+  {
+    return $this->isUsageTrackingEnabled();
+  }
 
   /** @param Closure(\Illuminate\Contracts\Auth\Authenticatable, Panel): bool $callback */
   public function authorizeUseAiUsing(Closure $callback): static

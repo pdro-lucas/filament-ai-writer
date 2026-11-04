@@ -12,6 +12,11 @@ class PruneUsageCommand extends Command
 
   public function handle(UsagePruner $pruner): int
   {
+    $usage = new \PdroLucas\FilamentAiWriter\Models\UsageAttempt();
+    if (!$usage->getConnection()->getSchemaBuilder()->hasTable($usage->getTable())) {
+      $this->info('Usage tracking storage is not installed. No rows deleted.');
+      return self::SUCCESS;
+    }
     $result = $pruner->run(
       $this->option('days') ?? config('filament-ai-writer.retention.days'),
       config('filament-ai-writer.retention.batch_size', 500),

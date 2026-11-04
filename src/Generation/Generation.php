@@ -21,12 +21,13 @@ class Generation
   public function run(string $systemPrompt, string $userInput, Closure $deliver, Closure $restore, string $field, ?string $operationId = null, ?string $actionName = null): GenerateResult
   {
     $plugin = AiWriterPlugin::current();
-    if ($plugin === null) {
-      return $this->runCore($systemPrompt, $userInput, $deliver, $restore);
-    }
-    if (!$plugin->canUseAi()) {
+    if ($plugin !== null && !$plugin->canUseAi()) {
       throw new AuthorizationException('You are not authorized to use AI Writer.');
     }
+    if ($plugin === null || !$plugin->isUsageTrackingEnabled()) {
+      return $this->runCore($systemPrompt, $userInput, $deliver, $restore);
+    }
+    // Admission (availability, blocks, credits, abuse) follows usageTracking until controls get their own module.
     $admission = $plugin->controls()->admit();
     $context = new GenerationContext($operationId ?? (string) \Illuminate\Support\Str::uuid(), $admission->panelId,
       $admission->actor->type, $admission->actor->id, $field, $actionName);

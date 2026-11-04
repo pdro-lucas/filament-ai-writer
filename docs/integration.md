@@ -30,6 +30,7 @@ use PdroLucas\FilamentAiWriter\Controls\ActorIdentity;
 // Inside your existing PanelProvider::panel(Panel $panel): Panel method:
 return $panel->plugin(
     AiWriterPlugin::make()
+        ->usageTracking() // Ledger, statistics, credits and controls; requires the package migrations.
         ->authorizeUseAiUsing(fn (Authenticatable $actor, Panel $panel): bool =>
             $actor instanceof User && $actor->tenant_id !== null
             && Gate::forUser($actor)->allows('use-ai-writer'))
@@ -201,6 +202,7 @@ use App\Filament\Pages\TeamAiCredits;
 use PdroLucas\FilamentAiWriter\AiWriterPlugin;
 
 AiWriterPlugin::make()
+    ->usageTracking()
     ->controlsPage(TeamAiControls::class)
     ->creditsPage(TeamAiCredits::class)
     ->usersTab(false)

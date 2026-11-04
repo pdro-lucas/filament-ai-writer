@@ -14,6 +14,10 @@ class RecoverOperationsCommand extends Command
   public function handle(Credits $credits): int
   {
     try {
+      if (!$credits->connection()->getSchemaBuilder()->hasTable('filament_ai_writer_operations')) {
+        $this->info('Usage tracking storage is not installed. No operations to recover.');
+        return self::SUCCESS;
+      }
       $count = $credits->recoverExpiredOperations();
       $this->info("Recovered {$count} expired operation(s). Late results cannot be delivered; remote costs may still exist.");
       return self::SUCCESS;
