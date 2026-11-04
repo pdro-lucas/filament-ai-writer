@@ -2,6 +2,21 @@
 
 Status: etapas 1 e 2 concluídas. Etapa 2 com Dique APPROVED FINAL, zero blockers e 16/16 hashes conferidos; suites Filament 4.15.3 e 5.10.3 verdes (146 testes/1072 assertions), probes reais MySQL 8.4.11 e Workbench build preservando a demo. PostgreSQL não exercitado; QA visual é do usuário. Proteção contra abuso (etapa 3 core) concluída com Dique APPROVED FINAL (Standards0/Spec0,10/10hashes), suites Filament4/5 verdes (152 testes/1152 assertions) e probes concorrentes MySQL8.4.11; experiência completa (etapa 4 UI) implementada com Dique FINAL APPROVED (Standards0/Spec0,27/27 hashes), suites Filament4.15.3/5.10.3 verdes (162 testes/1391 assertions) e inspeção autorizada pelo root de desktop claro/escuro e viewport390px. A inspeção incluiu Settings, Users/modal, Escape e topbar→créditos próprios; sem mutações administrativas/numeric quotaon no browser, touchscreen físico, screenreader ou auditoria completa de teclado. Não há nova alegação multibanco/concorrência nesta etapa. Contrato/implementação: `/tmp/filament-stage4-host-integration.md` e `/tmp/filament-stage4-implementation.md`; revisão: `/tmp/filament-stage4-native-review.md`; evidência visual atribuída ao root: `/tmp/filament-stage4-root-visual.md`. Relatório etapa3: `/tmp/filament-stage3-implementation.md`; revisão: `/tmp/filament-stage3-source-review.md`. Relatório de implementação: `/tmp/filament-stage2-implementation.md`; revisão final: `/tmp/filament-stage2-source-review.md`.
 
+## Decisões D1 a D6 (plugin adaptável ao host)
+
+Aprovadas em 2026-11-04. Elas se somam às decisões abaixo e prevalecem onde houver conflito.
+
+| ID | Decisão |
+| --- | --- |
+| **D1** | Três camadas, cada uma opt-in: núcleo (`AiWriterAction` + providers, sem tabelas nem plugin, como na 0.7.1), `usageTracking()` (ledger, deduplicação e Estatísticas) e `controls()` (créditos, antiabuso e Controles; exige `usageTracking()` e falha com erro claro no registro). Com um módulo desligado não há páginas, rotas, render hooks nem consultas às tabelas dele. |
+| **D2** | Padrões não intrusivos: indicador de créditos ligado a um render hook configurável (padrão `USER_MENU_BEFORE`) e removível; aba Usuários só com diretório configurado e desligável com `usersTab(false)`; `canUseAi()` como permissão própria. |
+| **D3** | Quem gera texto recebe uma mensagem curta e acionável. Negações de cota, bloqueio e frequência continuam específicas, com a data de renovação quando houver. Falhas técnicas mostram uma mensagem genérica com código de referência, e o detalhe vai para o log com o mesmo código. O detalhe técnico só aparece para quem tem `canManage`; sem plugin registrado, ninguém o vê. |
+| **D4** | Motivo obrigatório em ações contra uma pessoa e ao renovar todos; configurável com `requireReason()`. |
+| **D5** | Estatísticas e Atividade são telas separadas. "Meus créditos" vira o popover do indicador, e a página fica opcional (`creditsPage()`). |
+| **D6** | A API fluente é padronizada antes do lançamento: setters `bool\|Closure` ou `string\|Closure` avaliados no uso, um prefixo por recurso, getters simétricos e imports no lugar de nomes completos. A API pública da `AiWriterAction` da 0.7.1 não muda. |
+
+Consequências adotadas: textos nos arquivos de tradução do pacote (`en`, `pt_BR`), datas e fuso do Filament do host, moeda configurável, visual só com componentes e tokens do Filament, e métricas como widgets registráveis. O guia de upgrade está em `docs/upgrade.md`.
+
 ## Objetivo
 
 Permitir que uma aplicação Filament controle a disponibilidade de IA, distribua créditos por usuário e contenha abuso sem exigir um model `User`, colunas ou arquitetura de tenancy específicos.

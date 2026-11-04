@@ -15,7 +15,7 @@ This guide complements the [README](../README.md). All examples use the existing
 
 ## Panel setup and a scoped actor directory
 
-Install the package, publish migrations and migrate as described in the [README](../README.md#installation). Tables are required even with quotas and protections off. For an existing installation, read the [cutover requirements](#credits-deployment-and-recovery) first.
+Install the package, publish migrations and migrate as described in the [README](../README.md#installation). The migrations and tables are required only when you enable `usageTracking()` or `controls()`; the writer action alone needs none. For an existing installation, read the [upgrade guide](upgrade.md) and the [cutover requirements](#credits-deployment-and-recovery) first.
 
 Register a separate plugin instance in each `PanelProvider::panel()`. The following is a complete plugin configuration to add to your existing panel chain. It illustrates a host with `App\Models\User`, `tenant_id`, `name` and `email`, and host-defined Gate abilities. These are example host choices, not package requirements. This host uses a tenant assigned to the authenticated account; an application with switchable tenants must instead derive and authorize its active tenant on the server.
 
@@ -35,8 +35,10 @@ return $panel->plugin(
         ->authorizeUseAi(fn (Authenticatable $actor, Panel $panel): bool =>
             $actor instanceof User && $actor->tenant_id !== null
             && Gate::forUser($actor)->allows('use-ai-writer'))
+        // Statistics cover the whole panel, not one tenant: only accounts that may see every tenant
+        // (here, platform accounts without a tenant) get this permission.
         ->authorizeViewStatistics(fn (Authenticatable $actor, Panel $panel): bool =>
-            $actor instanceof User && $actor->tenant_id !== null
+            $actor instanceof User && $actor->tenant_id === null
             && Gate::forUser($actor)->allows('view-ai-writer-statistics'))
         ->authorizeManage(fn (Authenticatable $actor, Panel $panel): bool =>
             $actor instanceof User && $actor->tenant_id !== null
@@ -87,7 +89,7 @@ Keep any additional host visibility restrictions in **both** callbacks. Search a
 
 Without custom callbacks, authenticated panel actors may use AI; management and statistics default to denied. Guests are denied. The three permissions are independent: managing AI does not grant generation or statistics, and blocking an administrator's generation does not remove management permission. Authorization uses the current panel's guard.
 
-The default control scope is `panel:<panel id>`. A custom stable scope deliberately shares availability, blocks, quota periods, protections and audit among panels returning that string. Scope and actor values must be nonempty UTF-8 strings of at most 255 bytes without control characters. A resolver does not grant access; host authorization must protect the resolved scope. Usage statistics remain **panel-scoped**, showing all actors in that panel; a tenant control scope does not make the statistics page tenant-filtered. Grant statistics only to viewers allowed to see the whole panel's metadata.
+The default control scope is `panel:<panel id>`. A custom stable scope deliberately shares availability, blocks, quota periods, protections and audit among panels returning that string. Scope and actor values must be nonempty UTF-8 strings of at most 255 bytes without control characters. A resolver does not grant access; host authorization must protect the resolved scope. Usage statistics remain **panel-scoped**, showing all actors in that panel; a tenant control scope does not make the statistics page or its metric widgets tenant-filtered. Grant statistics only to viewers allowed to see the whole panel's metadata, as the example above does by excluding tenant accounts.
 
 The built-in pages freeze context at mount and reject changed panel/guard/scope/actor or revoked permission on later requests. Reopen after switching accounts or tenants. `canUseAi()` is a permission check; it does not itself read availability, balance or abuse state. Generation checks those at admission.
 
@@ -158,7 +160,7 @@ The host owns those rules; the plugin rechecks the configured callbacks on the s
 | Desired outcome | Supported control | Effect |
 | --- | --- | --- |
 | Use your existing User Resource | `usersTab(false)` | Hides the built-in Users task and rejects forged requests to it; Settings/Activity and scoped management APIs remain |
-| Remove the topbar indicator | `creditsIndicator(false)` | Hides that instance's indicator; the personal page and enforcement remain |
+| Remove the credits indicator | `creditsIndicator(false)` | Hides that instance's indicator (it can also move to another hook with `creditsIndicatorRenderHook()`); enforcement remains, and My AI credits exists only if `creditsPage()` is on |
 | Hide a page from the menu | `controlsNavigation(false)`, `creditsNavigation(false)`, `statisticsNavigation(false)` | Removes the navigation entry; the route and authorization remain |
 | Remove a page and its route | `statisticsPage(false)`, `controlsPage(false)` (`creditsPage()` is already off by default) | No page, no route (404); permissions and services behind it are unchanged |
 | Deny AI use | `authorizeUseAi(fn (): bool => false)` | Denies new writer requests and own-credit surfaces; registration, storage and ledger remain required |
@@ -382,6 +384,39 @@ $this->dispatch('ai-writer-credits-changed');
 
 There is no polling or custom JavaScript. Direct service calls and other browser sessions do not broadcast changes to this browser; a normal refresh reads them. `creditsIndicator(false)` only removes the indicator.
 
+## Messages, translations and formats
+
+**Two-layer error messages.** Whoever generates text sees a short message they can act on. Denials they can resolve (AI disabled, blocked, credits exhausted with the renewal date, frequency, concurrency, failure pause, unusable output) stay specific. A technical failure (storage, migrations, configuration, provider, transaction) shows a generic message with a reference such as `AIW-7K2M9QXD`, and the application log gets one `AI Writer generation failed.` entry with the same `reference`, the failure code, safe IDs and where the cause was thrown (class and `file:line`). Storage, controls and transaction causes also log their exception with its stack; provider causes log only class and location, because their message can carry a response body or a key. Only `authorizeManage()` users see the technical detail in the notification. Without a registered plugin there is no manage permission to check, so nobody does.
+
+**Translations.** All visible text lives in `resources/lang/{en,pt_BR}` under the `filament-ai-writer` namespace. Publish them to override or add a language:
+
+```bash
+php artisan vendor:publish --tag=filament-ai-writer-translations
+```
+
+This copies the files to `lang/vendor/filament-ai-writer/`. A key you publish wins over the package's; keys you leave out keep coming from it. Groups: `writer` (action), `failures`, `controls`, `credits`, `statistics`, `navigation`. For a new language, copy `en` to `lang/vendor/filament-ai-writer/<locale>/`.
+
+**Dates.** The plugin sets no date format and no timezone. Table columns, schema entries and text such as the renewal date use your Filament defaults, including a timezone per user:
+
+```php
+use Filament\Schemas\Schema;
+use Filament\Support\Facades\FilamentTimezone;
+use Filament\Tables\Table;
+
+// In a service provider's boot():
+Table::configureUsing(fn (Table $table) => $table->defaultDateTimeDisplayFormat('d/m/Y H:i'));
+Schema::configureUsing(fn (Schema $schema) => $schema
+    ->defaultDateTimeDisplayFormat('d/m/Y H:i')
+    ->defaultDateDisplayFormat('d/m/Y'));
+FilamentTimezone::set(fn (): ?string => auth()->user()?->timezone);
+```
+
+**Currency.** Costs are shown with the currency in `config/filament-ai-writer.php` (`AI_WRITER_CURRENCY`, default `USD`; optional `AI_WRITER_CURRENCY_SYMBOL`). It only changes labels and symbols: amounts are never converted. Providers such as OpenRouter report USD, so set another code only when your own `pricing` rates are in that currency.
+
+```php
+'currency' => ['code' => 'BRL', 'symbol' => 'R$ '],
+```
+
 ## Customize presentation
 
 Every plugin screen is built only from Filament components and design tokens: sections, stats and chart widgets, tables, native filters, tabs and the dropdown. The views ship no `<style>`, no `.fi-*` overrides and no fixed font sizes or colors, and the package registers no CSS asset. The one color the plugin sets in PHP is the writer button's `Color::Fuchsia`, the default inherited from 0.7.1; change it per action with `->color()`. Colors, radius, fonts and dark mode therefore come from your Filament theme, with nothing to override.
@@ -417,8 +452,9 @@ Laravel overrides live under `resources/views/vendor/filament-ai-writer/`. Keep 
 | `controls/settings.blade.php`, `controls/users.blade.php` | Controls partials |
 | `ai-controls.blade.php`, `my-ai-credits.blade.php` | Full built-in page views |
 | `credits-indicator.blade.php`, `credits-indicator-hook.blade.php` | Indicator and panel hook |
+| `usage-statistics.blade.php`, `usage-attempt-details.blade.php`, `usage-chart-data.blade.php` | Statistics page, request drawer and the screen-reader chart table |
 
-`ManageAiUserAction` calls `AiCreditStatus` directly, so overriding `controls/balance.blade.php` does not change that modal. For action presentation extensions, subclass `ManageAiUserAction` and retain its inherited guards. For page extensions, `controlsPage()` accepts a concrete `AiControlsPage` subclass and `creditsPage()` a concrete `MyAiCreditsPage` subclass; unrelated/abstract classes are rejected and setters affect only that plugin instance. The topbar uses the configured credit page's URL. Preserve inherited access, mount/hydrate/context checks, Blade escaping and authorized public service calls when overriding behavior.
+`ManageAiUserAction` calls `AiCreditStatus` directly, so overriding `controls/balance.blade.php` does not change that modal. For action presentation extensions, subclass `ManageAiUserAction` and retain its inherited guards. For page extensions, `controlsPage()` accepts a concrete `AiControlsPage` subclass and `creditsPage()` a concrete `MyAiCreditsPage` subclass; unrelated/abstract classes are rejected and setters affect only that plugin instance. The indicator popover links to the page set with `creditsPage()` (no link while that page is off), and a subclass given to `statisticsPage()`, `controlsPage()` or `creditsPage()` replaces that page and its route. Preserve inherited access, mount/hydrate/context checks, Blade escaping and authorized public service calls when overriding behavior.
 
 ## Credits, deployment and recovery
 

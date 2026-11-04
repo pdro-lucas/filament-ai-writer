@@ -9,7 +9,7 @@ A Filament plugin for AI-assisted writing, with per-panel registration, host-def
 
 ## Documentation
 
-Start with [installation](#installation), [panel registration](#panel-plugin) and the [writing examples](#usage). See the [integration guide](docs/integration.md) for administration, scoped directories, custom action placement, credits and presentation. Reporting and maintenance are covered in [statistics](#current-panel-statistics) and [retention](#opt-in-usage-retention).
+Start with [installation](#installation), [panel registration](#panel-plugin) and the [writing examples](#usage). Coming from 0.7.1? Read the [upgrade guide](docs/upgrade.md): the action alone needs nothing new. See the [integration guide](docs/integration.md) for administration, scoped directories, custom action placement, credits, translations and presentation. Reporting and maintenance are covered in [statistics](#current-panel-statistics) and [retention](#opt-in-usage-retention).
 
 ## Requirements
 
@@ -169,6 +169,18 @@ The indicator opens a keyboard-accessible popover with the signed-in user's own 
 
 Plugin API conventions: every on/off or text setter accepts a value or a `Closure` (`bool|Closure`, `string|Closure`) and is evaluated when used, not when the plugin is configured. Closures can type-hint or name `$panel` and, for authorization and `scope()`, `$actor` (also available as `$user`). Each setter has a matching getter (`usersTab()` / `hasUsersTab()`, `scope()` / `getScope()`, `authorizeManage()` / `canManage()`). Setters are grouped by feature prefix: `usageTracking()`, `controls()`, `statisticsPage()`, `controlsPage()`, `creditsPage()`, the per-page navigation setters (`statistics…`, `controls…`, `credits…`), `creditsIndicator()` and `creditsIndicator*()`, `requireReason()`, `usersTab()`, `authorize*()` and `scope()`. Module and page switches also decide which pages and routes exist, so they are read when the panel registers the plugin as well as on later requests.
 
+### Controls sections
+
+The Controls page has three sections (Settings, Users, Activity), bound to the URL: `/ai-writer-controls?section=activity` opens Activity, survives a reload and works with the browser's back button. An unknown or unavailable value (for example `users` without an actor directory) falls back to the first available section, and every section is re-authorized on the server. A subclass passed to `controlsPage()` can change the list and order by overriding `sections()`. A reason of at most 500 characters is required for actions against one person and when renewing everyone, and optional elsewhere; `requireReason()` changes that for every action or just some.
+
+### Messages, translations and formats
+
+People who generate text see a short message they can act on. Quota, block and frequency denials stay specific, with the renewal date when there is one. Technical failures show a generic message with a reference code, and the log keeps the detail under the same `reference`; only `authorizeManage()` users see it in the notification. All text lives in the package's `en` and `pt_BR` translations (`php artisan vendor:publish --tag=filament-ai-writer-translations`; your published keys win). Dates follow your Filament format and timezone, even per user, and costs use the configurable `currency` of the config file. Details in the [integration guide](docs/integration.md#messages-translations-and-formats).
+
+### Native look and metric widgets
+
+Every screen uses only Filament components and tokens, so your theme (colors, radius, font, dark mode) applies; the package ships no CSS. `UsageOverviewStats` and `UsageCountChart` are ordinary widgets: register them on your own dashboard with `$panel->widgets([...])` and they respect `authorizeViewStatistics()`. Icons can be replaced with `FilamentIcon` aliases. See [Customize presentation](docs/integration.md#customize-presentation) for the aliases and the few public CSS hooks.
+
 These options do not revoke permissions. Authorization callbacks enforce access on the server, including later Livewire requests. AI availability, quotas, abuse protections, navigation visibility and retention are separate controls.
 
 The [integration guide](docs/integration.md) provides:
@@ -177,17 +189,16 @@ The [integration guide](docs/integration.md) provides:
 - [Disable options and navigation-only customization](docs/integration.md#choose-what-to-disable).
 - [Manage AI in Resource tables, record headers and custom pages](docs/integration.md#manage-ai-in-your-own-surfaces).
 - [Writer actions in field suffixes and schema section headers](docs/integration.md#place-the-writing-action).
-- [Own-credit APIs, native schema embedding and topbar refresh](docs/integration.md#show-personal-credit-status).
+- [Own-credit APIs, native schema embedding and indicator refresh](docs/integration.md#show-personal-credit-status).
+- [Error messages, translations, date formats and currency](docs/integration.md#messages-translations-and-formats).
 - [Themes, view overrides and page subclasses](docs/integration.md#customize-presentation).
 - [Quota, abuse, deployment and recovery contracts](docs/integration.md#credits-deployment-and-recovery).
 
 ### Upgrading an existing installation
 
-Writer actions keep working without the plugin. Register it in each panel that needs permissions, and add `usageTracking()` for usage history and `controls()` for credits and administration. Service-provider discovery does not register a panel plugin. Remove temporary `authorize()` or `beforeGenerate()` callbacks that only duplicated plugin checks; retain application-specific restrictions. Actions outside a current Filament panel are unsupported.
+Writer actions keep working without the plugin and without migrations. Register the plugin in each panel that needs permissions, add `usageTracking()` for usage history and `controls()` for credits and administration. Service-provider discovery does not register a panel plugin. Remove temporary `authorize()` or `beforeGenerate()` callbacks that only duplicated plugin checks; retain application-specific restrictions. Actions outside a current Filament panel are unsupported.
 
-With `usageTracking()` enabled, publish **new** migrations and run them before generating. The package never migrates automatically and requires no host user-table changes. Missing controls storage or a failing scope resolver refuses generation rather than bypassing stored policy.
-
-For existing installations, migrations `000003` (credits) and `000004` (abuse) require a coordinated source/schema cutover. Pause admissions, recovery workers and pruning; drain old pending/received operations and stop old writers before migrating and deploying the new writers. Mixed-version rolling deployment is unsupported. Follow the [cutover details](docs/integration.md#credits-deployment-and-recovery) before resuming traffic.
+The [upgrade guide](docs/upgrade.md) lists what each layer needs, how authorization closures are resolved (by name or type), that `authorize*()` without an argument grants everyone, and that databases from the PR #21 build need `migrate:fresh`. With `usageTracking()` or `controls()` enabled, publish **new** migrations and run them before generating; missing storage or a failing scope resolver refuses generation rather than bypassing stored policy. For installations that already run migrations `000003` (credits) and `000004` (abuse), follow the [cutover details](docs/integration.md#credits-deployment-and-recovery): pause admissions, drain old operations and stop old writers before migrating.
 
 ## Usage
 
@@ -487,7 +498,7 @@ The immutable result holds visible text in memory, requested and returned models
 
 `outcome` is `text`, `empty`, `refused` or `incomplete`. Only usable `text` is delivered. Empty, refused, malformed and truncated responses preserve the original field; invalid selections and empty parsed arrays also preserve it. No success event is emitted for those outcomes. Internal thought blocks are excluded. Available usage is recorded even when the result cannot be delivered.
 
-**User-facing failure messages:** people who generate text see either a specific, actionable denial (AI disabled, blocked, credits exhausted with the renewal date when there is one, request frequency, concurrency, failure pause, unusable output) or, for technical failures (storage, migrations, configuration, provider, transaction), a short generic message with a reference code such as `AIW-7K2M9QXD`. The technical detail is written to the application log (`AI Writer generation failed.`) with the same `reference`, the failure code and safe IDs. Only users allowed by `authorizeManage()` also see the detail in the notification; with no plugin registered nobody does.
+**User-facing failure messages:** people who generate text see either a specific, actionable denial (AI disabled, blocked, credits exhausted with the renewal date when there is one, request frequency, concurrency, failure pause, unusable output) or, for technical failures (storage, migrations, configuration, provider, transaction), a short generic message with a reference code such as `AIW-7K2M9QXD`. The technical detail is written to the application log (`AI Writer generation failed.`) with the same `reference`, the failure code, safe IDs and the class and `file:line` where the cause was thrown (storage and controls causes also carry their stack; provider causes never log their message). Only users allowed by `authorizeManage()` also see the detail in the notification; with no plugin registered nobody does.
 
 Providers throw `GenerationFailure` for configuration, transport, protocol or upstream failures. It carries a local safe failure code, status, safe IDs, duration, outcome-unknown flag and an optional metadata-only result, with no chained raw exception. Custom providers must follow this contract and must not attach prompts, credentials, raw errors or response bodies. `AiTextGenerated` remains a delivery event with text in memory; it is not a durable usage recorder. Its model is now the returned model, possibly `null`, rather than a guessed configuration value.
 
@@ -531,7 +542,7 @@ The plugin registers **AI Writer usage** at `/your-panel/ai-writer-usage`. Login
 
 The panel is fixed context, never a selectable cross-panel filter. An authorized viewer can inspect **all actors' metadata within the current panel**, not just their own calls. No cross-panel expansion/global view is exposed. Actor filters identify both actor class and opaque identifier, without joining a host User table or assuming names/roles/ID types.
 
-History is read-only and paginated (10/25/50 rows; values are also bounded server-side). One screen shows Requests, Tokens consumed, Costs and Average duration above one requests histogram and a compact request table. The shared selection defaults to the last seven local calendar days, with Today/7 days/30 days/custom dates and actor/result filters. Success means delivered, failure means failed, and in progress includes pending and received. Period boundaries use the application's timezone and convert to UTC; the end date includes the entire local calendar day. Actor options are panel-scoped and bounded. Provider/model switching and comparisons are not part of the screen.
+History is read-only and paginated (10/25/50 rows; values are also bounded server-side). One screen shows Requests, Tokens consumed, Costs and Average duration (the `UsageOverviewStats` widget) above one requests histogram (`UsageCountChart`) and a compact request table, with native table filters for period, user and result. Both widgets can also be placed on your dashboard, where they show the last seven days. The shared selection defaults to the last seven calendar days, with Today/7 days/30 days/custom dates. Success means delivered, failure means failed, and in progress includes pending and received. Period boundaries use the application's timezone and convert to UTC; the end date includes the entire local calendar day. Actor options are panel-scoped and bounded. Provider/model switching and comparisons are not part of the screen.
 
 Rows open a right detail drawer with historical actual model/provider, exact recorded consumption/cost source, safe IDs and sanitized outcomes. Every drawer lookup rechecks current permission, guard and panel scope. Metrics, histogram and table share the same selection. Unknown measurements remain unavailable, known zero stays measured, estimated costs are labeled and incomplete known-cost subtotals show partial coverage; exact canonical values remain available in details. Token and duration summaries use available measurements and identify coverage.
 
