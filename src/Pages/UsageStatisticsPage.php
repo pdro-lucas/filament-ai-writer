@@ -35,6 +35,13 @@ class UsageStatisticsPage extends Page implements HasTable
 
   use InteractsWithTable {
     getTableFilterState as protected getRawTableFilterState;
+    resolveTableRecord as protected resolveTableRecordByKey;
+  }
+
+  /** Usage ids are integers: any other key from a tampered payload is "not found" instead of a database type error. */
+  protected function resolveTableRecord(?string $key): \Illuminate\Database\Eloquent\Model|array|null
+  {
+    return $key !== null && ctype_digit($key) ? $this->resolveTableRecordByKey($key) : null;
   }
 
   protected static ?string $title = null;
