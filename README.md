@@ -571,26 +571,6 @@ Deletion selects bounded ID batches, freezes an upper ID for the run, and rechec
 
 Deleted rows disappear from subsequent history queries, known subtotals and measurement coverage. This metadata cleanup cannot recover stored text (none is kept), prove remote billing, retry inference or alter provider accounts. Keep external backups/audit records according to the host's policy before opting in.
 
-## Package structure
-
-```
-src/
-  Actions/
-    AiWriterAction.php                  # The Filament Action
-  Contracts/
-    AiProvider.php                      # Interface for AI providers
-  Events/
-    AiTextGenerated.php                 # Event dispatched after generation
-  Providers/
-    AnthropicProvider.php
-    OpenAiProvider.php
-    GeminiProvider.php
-    OpenRouterProvider.php
-  FilamentAiWriterServiceProvider.php
-config/
-  filament-ai-writer.php
-```
-
 ## Extending with a custom provider
 
 Implement the `AiProvider` contract and rebind it in your `AppServiceProvider`:
@@ -604,67 +584,9 @@ public function register(): void
 }
 ```
 
-## Local development
-
-The isolated Orchestra Testbench/Workbench demo uses Laravel 12, PHPUnit 11 and its own SQLite file. No host Laravel app, API key, Node build or paid API call is needed.
-
-```bash
-composer install
-composer workbench:build
-composer serve
-```
-
-Open `http://127.0.0.1:8000/demo` and sign in with `demo@example.test` / `password`. Enter a topic and click **Generate demo text** next to **Generated text** for silent generation. For interactive generation, click **Open writing prompt** next to **Interactive text**, enter a request of at least 10 characters and click **Generate**. Both modes fill their respective fields with a fixed local response. The demo always overrides the provider and key with fake values and blocks unexpected Laravel HTTP requests. The demo explicitly grants its authenticated viewer statistics permission. Follow **View this panel's usage history** or open `/demo/ai-writer-usage` after generation. Normal generation records tokens with unavailable cost. Include `[demo:estimated]` in the topic (silent) or modal request (interactive) to use an example host tariff; `[demo:failure]` returns a safe HTTP503 failure and `[demo:truncated]` returns incomplete output. Both failure scenarios preserve the original field and appear as failed attempts; no paid API is contacted. The demo tariff is an example, not a live price quote. Its public demo app key and credentials are for local use only; `serve` binds to loopback.
-
-`workbench:build` migrates `workbench/database/database.sqlite`, seeds the demo user and publishes Filament assets. It is safe to repeat and does not reset the demo database. The package ServiceProvider never loads the demo providers in a consuming application.
-
-```bash
-composer test
-```
-
-Tests bootstrap with `WithWorkbench`, use a separate SQLite `:memory:` connection by default, and block unexpected HTTP calls. Tests must install their own `Http::fake()` responses; the demo response is not installed during unit tests. `tests/TestCase.php` is the shared base for subsequent coverage.
-
-### Running the suite on MySQL or PostgreSQL
-
-The whole suite also passes on MySQL 8.4 and PostgreSQL 16. Select the database with `AI_WRITER_TEST_DB_CONNECTION` (`mysql` or `pgsql`) and `AI_WRITER_TEST_DB_HOST`, `AI_WRITER_TEST_DB_PORT`, `AI_WRITER_TEST_DB_DATABASE`, `AI_WRITER_TEST_DB_USERNAME`, `AI_WRITER_TEST_DB_PASSWORD`. **The database is wiped by `migrate:fresh`: use a dedicated, empty one.** With Docker:
-
-```bash
-docker network create ai-writer-test
-docker run -d --name ai-writer-mysql --network ai-writer-test -e MYSQL_ROOT_PASSWORD=secret -e MYSQL_DATABASE=suite mysql:8.4
-docker run -d --name ai-writer-pg --network ai-writer-test -e POSTGRES_PASSWORD=secret -e POSTGRES_DB=suite postgres:16
-# Use any PHP 8.2+ image with pdo_mysql/pdo_pgsql, intl and zip; the repo is mounted at /app after `composer install`.
-docker run --rm --network ai-writer-test -v "$PWD":/app -w /app \
-  -e AI_WRITER_TEST_DB_CONNECTION=mysql -e AI_WRITER_TEST_DB_HOST=ai-writer-mysql -e AI_WRITER_TEST_DB_DATABASE=suite -e AI_WRITER_TEST_DB_USERNAME=root -e AI_WRITER_TEST_DB_PASSWORD=secret \
-  your-php-image vendor/bin/phpunit
-# PostgreSQL: -e AI_WRITER_TEST_DB_CONNECTION=pgsql -e AI_WRITER_TEST_DB_HOST=ai-writer-pg -e AI_WRITER_TEST_DB_DATABASE=suite -e AI_WRITER_TEST_DB_USERNAME=postgres -e AI_WRITER_TEST_DB_PASSWORD=secret
-docker rm -f -v ai-writer-mysql ai-writer-pg && docker network rm ai-writer-test
-```
-
-On a real database the suite also runs `tests/Concurrency/MultiProcessAdmissionTest`, which races separate PHP processes through admission (last credit, frequency and concurrency limits) behind a file barrier. It is skipped on SQLite, where row-lock deadlocks and double admission cannot be reproduced, so run it on MySQL after touching the admission locking in `Credits`, `Controls` or `Abuse`.
-
-To check the other supported major without changing the manifest:
-
-```bash
-composer update 'filament/*' livewire/livewire --with='filament/filament:^4.15.3' --with='livewire/livewire:^3.0' -W
-composer workbench:build
-composer test
-# Restore the default latest compatible major:
-composer update 'filament/*' livewire/livewire -W
-composer workbench:build
-```
-
-Stop the local server before switching dependency versions. Composer's lock file remains ignored according to the existing library convention.
-
 ## Contributing
 
 Contributions are welcome! Feel free to open an issue or submit a pull request.
-
-Before contributing, please ensure your changes follow the existing code style and include any necessary updates to documentation.
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feat/my-feature`)
-3. Commit your changes using [conventional commits](https://www.conventionalcommits.org/)
-4. Push to your fork and open a pull request
 
 ## License
 
