@@ -880,6 +880,56 @@ class AiControlsTest extends TestCase
     $page->call('$refresh')->assertSee('target')->assertCountTableRecords(2);
     $plugin->actorDirectoryUsing(fn () => [], fn () => null);
     $page->call('$refresh')->assertSee('target')->assertCountTableRecords(2);
+
+    // Filters only narrow this context's audit rows: another scope's rows never appear, and malformed values select nothing.
+    $plugin->controlsService()->setEnabled($context, false, 'Pause');
+    \PdroLucas\FilamentAiWriter\Models\ControlAudit::query()->create([
+      'scope_key' => hash('sha256', 'another-scope'), 'scope' => 'another-scope', 'panel_id' => 'demo', 'guard' => 'workbench',
+      'administrator_type' => 'HostPerson', 'administrator_id' => 'foreign-admin', 'action' => 'block', 'actor_type' => null, 'actor_id' => null,
+      'before' => ['blocked' => false], 'after' => ['blocked' => true], 'reason' => 'Foreign', 'created_at' => \Carbon\CarbonImmutable::now('UTC'),
+    ]);
+    $admin = \PdroLucas\FilamentAiWriter\Usage\UsageStatistics::actorKey($context->actor->type, $context->actor->id);
+    $foreign = \PdroLucas\FilamentAiWriter\Usage\UsageStatistics::actorKey('HostPerson', 'foreign-admin');
+    $page = \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\AiControlsPage::class)->call('showSection', 'activity')->assertCountTableRecords(3);
+    $page->filterTable('kind', 'block')->assertCountTableRecords(2)
+      ->filterTable('kind', 'availability')->assertCountTableRecords(1)
+      ->filterTable('kind', 'not-a-kind')->assertCountTableRecords(0)
+      ->filterTable('kind', null)->filterTable('administrator', $admin)->assertCountTableRecords(3)
+      ->filterTable('administrator', $foreign)->assertCountTableRecords(0)
+      ->filterTable('administrator', 'garbage')->assertCountTableRecords(0)
+      ->filterTable('administrator', null)->filterTable('period', ['from' => 'garbage', 'until' => '2026-02-31'])->assertCountTableRecords(0);
+    // The author select finds people by name, e-mail or id (not only the stored id), most recent first, within this scope.
+    $plugin->actorDirectoryUsing(fn () => [], fn ($type, $id, $scope) => new \PdroLucas\FilamentAiWriter\Controls\ActorIdentity($type, $id, $id === 'second-admin' ? 'Zed Zeta · zed@example.test' : 'Ada Lovelace · ada@example.test'));
+    \PdroLucas\FilamentAiWriter\Models\ControlAudit::query()->create([
+      'scope_key' => $context->scopeKey(), 'scope' => $context->scope, 'panel_id' => $context->panelId, 'guard' => $context->guard,
+      'administrator_type' => 'HostPerson', 'administrator_id' => 'second-admin', 'action' => 'availability', 'actor_type' => null, 'actor_id' => null,
+      'before' => ['enabled' => true], 'after' => ['enabled' => false], 'reason' => 'Second', 'created_at' => \Carbon\CarbonImmutable::now('UTC'),
+    ]);
+    $page = \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\AiControlsPage::class)->call('showSection', 'activity');
+    $second = \PdroLucas\FilamentAiWriter\Usage\UsageStatistics::actorKey('HostPerson', 'second-admin');
+    $authors = fn (string $search = '') => (new \ReflectionMethod($page->instance(), 'auditActors'))->invoke($page->instance(), 'administrator', $search);
+    $this->assertSame([$second, $admin], array_keys($authors()));
+    $this->assertSame([$admin], array_keys($authors('lovelace')));
+    $this->assertSame([$second], array_keys($authors('ZED@example')));
+    $this->assertSame([$second], array_keys($authors('second-admin')));
+    $this->assertSame([], $authors('foreign'));
+    // Tampered, array-valued filter state selects nothing instead of failing.
+    $page->set('tableFilters.kind.value', ['x'])->assertOk()->assertCountTableRecords(0)
+      ->set('tableFilters.kind.value', null)->set('tableFilters.administrator.value', ['x'])->assertOk()->assertCountTableRecords(0)
+      ->set('tableFilters.administrator.value', null);
+    // The period is whole local days in the host timezone: 00:00 local starts a day, 23:59 local still belongs to it.
+    \Filament\Support\Facades\FilamentTimezone::set('America/Sao_Paulo');
+    foreach (['2026-10-20 02:59:00' => 'before', '2026-10-20 03:00:00' => 'from-midnight', '2026-10-21 02:30:00' => 'until-2330', '2026-10-21 03:00:00' => 'after'] as $utc => $reason) {
+      \PdroLucas\FilamentAiWriter\Models\ControlAudit::query()->create([
+        'scope_key' => $context->scopeKey(), 'scope' => $context->scope, 'panel_id' => $context->panelId, 'guard' => $context->guard,
+        'administrator_type' => $context->actor->type, 'administrator_id' => $context->actor->id, 'action' => 'availability', 'actor_type' => null, 'actor_id' => null,
+        'before' => ['enabled' => true], 'after' => ['enabled' => false], 'reason' => $reason, 'created_at' => \Carbon\CarbonImmutable::parse($utc, 'UTC'),
+      ]);
+    }
+    $reasons = fn ($page, array $period) => $page->filterTable('period', $period)->instance()->getFilteredTableQuery()->orderBy('id')->pluck('reason')->all();
+    $this->assertSame(['from-midnight', 'until-2330'], $reasons($page, ['from' => '2026-10-20', 'until' => '2026-10-20']));
+    $this->assertSame(['before', 'from-midnight', 'until-2330'], $reasons($page, ['until' => '2026-10-20']));
+    $this->assertSame(['from-midnight', 'until-2330', 'after'], $reasons($page, ['from' => '2026-10-20', 'until' => '2026-10-21']));
   }
 
   public function test_context_rejects_panel_guard_and_administrator_changes_and_forged_snapshot(): void

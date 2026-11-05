@@ -3,6 +3,8 @@
 namespace PdroLucas\FilamentAiWriter\Pages;
 
 use Filament\Actions\Action;
+use Carbon\CarbonImmutable;
+use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
@@ -20,6 +22,9 @@ use PdroLucas\FilamentAiWriter\Credits\Credits;
 use Filament\Notifications\Notification;
 use Filament\Pages\Page;
 use Filament\Tables\Columns\TextColumn;
+use Filament\Tables\Enums\FiltersLayout;
+use Filament\Tables\Filters\Filter;
+use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Concerns\InteractsWithTable;
 use Filament\Tables\Contracts\HasTable;
 use Filament\Tables\Table;
@@ -41,7 +46,9 @@ class AiControlsPage extends Page implements HasTable
 {
   use UsesPluginNavigation;
 
-  use InteractsWithTable;
+  use InteractsWithTable {
+    updatedTableFilters as protected updatedTableFiltersByFilament;
+  }
 
   protected static ?string $title = null;
   protected static ?string $slug = 'ai-writer-controls';
@@ -538,6 +545,8 @@ class AiControlsPage extends Page implements HasTable
     return $table
       ->query(fn (): Builder => AiWriterPlugin::get()->controlsService()->audit($this->context()))
       ->heading(__('filament-ai-writer::controls.activity.heading'))->defaultSort('id', 'desc')->paginated([10, 25, 50])->defaultPaginationPageOption(10)
+      ->deferFilters(false)->filtersLayout(FiltersLayout::Dropdown)->filtersFormColumns(1)
+      ->filters($this->activityFilters())
       ->columns([
         // No format or timezone here: the host's Filament defaults (also per user) decide how dates look.
         TextColumn::make('created_at')->label(__('filament-ai-writer::controls.activity.date'))->tooltip(__('filament-ai-writer::statistics.timezone', ['timezone' => HostDates::timezone()]))->dateTime(),
@@ -553,7 +562,9 @@ class AiControlsPage extends Page implements HasTable
         TextColumn::make('actor_id')->label(__('filament-ai-writer::controls.activity.user'))->placeholder(__('filament-ai-writer::controls.activity.all_users'))->wrap()
           ->formatStateUsing(fn (ControlAudit $record): string => \PdroLucas\FilamentAiWriter\Usage\UsageStatistics::splitActorLabel($this->auditIdentity($record->actor_type, $record->actor_id))[0])
           ->description(fn (ControlAudit $record): ?string => $record->actor_type === null ? null : \PdroLucas\FilamentAiWriter\Usage\UsageStatistics::splitActorLabel($this->auditIdentity($record->actor_type, $record->actor_id))[1]),
-        TextColumn::make('reason')->label(__('filament-ai-writer::controls.activity.reason'))->placeholder(__('filament-ai-writer::controls.reason.none'))->wrap(),
+        // Long reasons stay at two lines; the whole text is in the tooltip.
+        TextColumn::make('reason')->label(__('filament-ai-writer::controls.activity.reason'))->placeholder(__('filament-ai-writer::controls.reason.none'))->wrap()->lineClamp(2)
+          ->tooltip(fn (ControlAudit $record): ?string => $record->reason),
       ])->emptyStateHeading(__('filament-ai-writer::controls.activity.empty'));
   }
 
@@ -631,6 +642,112 @@ class AiControlsPage extends Page implements HasTable
       }
     }
     return $usage;
+  }
+
+  /** A filter value the browser sends as anything but text (an array, say) would fail inside Filament's own rendering: it becomes an unknown choice, which selects nothing. */
+  public function updatedTableFilters(): void
+  {
+    foreach (['kind', 'administrator'] as $name) {
+      $value = $this->tableFilters[$name]['value'] ?? null;
+      if ($value !== null && !is_string($value)) {
+        $this->tableFilters[$name]['value'] = 'invalid';
+      }
+    }
+    $this->updatedTableFiltersByFilament();
+  }
+
+  /**
+   * Period, author and kind. Each one narrows the audit query the page already scopes to this context, so none can widen
+   * it; a malformed or foreign value selects nothing instead of failing.
+   *
+   * @return array<int, \Filament\Tables\Filters\BaseFilter>
+   */
+  protected function activityFilters(): array
+  {
+    $kinds = $this->activityKinds();
+
+    return [
+      Filter::make('period')->schema([
+        DatePicker::make('from')->label(__('filament-ai-writer::statistics.filter.from'))->native(false)->format('Y-m-d')->closeOnDateSelection(),
+        DatePicker::make('until')->label(__('filament-ai-writer::statistics.filter.until'))->native(false)->format('Y-m-d')->closeOnDateSelection(),
+      ])->query(function (Builder $query, array $data): Builder {
+        foreach (['from', 'until'] as $boundary) {
+          $value = $data[$boundary] ?? null;
+          if ($value === null || $value === '') { continue; }
+          $day = is_string($value) && preg_match('/^\d{4}-\d{2}-\d{2}/', $value) ? CarbonImmutable::createFromFormat('!Y-m-d', substr($value, 0, 10), HostDates::timezone()) : false;
+          if ($day === false || $day->format('Y-m-d') !== substr((string) $value, 0, 10)) { return $query->whereRaw('1 = 0'); }
+          $query->where('created_at', $boundary === 'from' ? '>=' : '<', ($boundary === 'from' ? $day : $day->addDay())->utc());
+        }
+        return $query;
+      }),
+      // The 50 most recent authors as options, and a name, e-mail or id search over the 200 most recent.
+      SelectFilter::make('administrator')->label(__('filament-ai-writer::controls.activity.administrator'))->searchable()
+        ->options(fn (): array => $this->recentAuditActors())
+        ->getSearchResultsUsing(fn (string $search): array => $this->auditActors('administrator', $search))
+        ->getOptionLabelUsing(fn (mixed $value): ?string => is_string($value) ? $this->auditActorLabel($value) : null)
+        ->query(fn (Builder $query, array $data): Builder => filled($data['value'] ?? null) ? $this->whereAuditActor($query, $data['value']) : $query),
+      SelectFilter::make('kind')->label(__('filament-ai-writer::controls.activity.kind'))->options($kinds)
+        ->query(fn (Builder $query, array $data): Builder => filled($data['value'] ?? null)
+          ? (is_string($data['value']) && array_key_exists($data['value'], $kinds) ? $query->where('action', $data['value']) : $query->whereRaw('1 = 0')) : $query),
+    ];
+  }
+
+  /** @return array<string, string> Audit action => the translated change label (the two states of a switch share one entry). */
+  protected function activityKinds(): array
+  {
+    $t = fn (string $key): string => __('filament-ai-writer::controls.activity.' . $key);
+
+    return ['availability' => $t('availability_on') . ' / ' . $t('availability_off'), 'block' => $t('block_on') . ' / ' . $t('block_off'),
+      'abuse_policy' => $t('abuse_policy'), 'quota_policy' => $t('quota_policy'), 'quota_limit' => $t('quota_limit'),
+      'quota_extra' => $t('quota_extra'), 'quota_reset' => $t('quota_reset'), 'quota_renew' => $t('quota_renew')];
+  }
+
+  /** @var array<string, string>|null */
+  protected ?array $recentAuditActorsCache = null;
+
+  /** The select's options: the 50 most recent authors, read once per request however often Filament asks for them. */
+  protected function recentAuditActors(): array
+  {
+    return $this->recentAuditActorsCache ??= $this->auditActors('administrator');
+  }
+
+  /**
+   * Authors in this scope's audit rows, most recent first, labelled as the column is. Without a search: the 50 most recent.
+   * With one: the 200 most recent are resolved and kept when their name, e-mail, type or id contains the text.
+   *
+   * @return array<string, string>
+   */
+  protected function auditActors(string $role, string $search = ''): array
+  {
+    $search = trim(mb_substr($search, 0, 100));
+    $rows = AiWriterPlugin::get()->controlsService()->audit($this->context())->reorder()->whereNotNull($role . '_id')
+      ->select([$role . '_type', $role . '_id'])->selectRaw('MAX(id) AS last_id')->groupBy($role . '_type', $role . '_id')
+      ->orderByDesc('last_id')->limit($search === '' ? 50 : 200)->get();
+    $options = [];
+    foreach ($rows as $row) {
+      [$type, $id] = [$row->{$role . '_type'}, $row->{$role . '_id'}];
+      $label = $this->auditIdentity($type, $id);
+      if ($search === '' || mb_stripos($label, $search) !== false || mb_stripos($id, $search) !== false || mb_stripos($type, $search) !== false) {
+        $options[\PdroLucas\FilamentAiWriter\Usage\UsageStatistics::actorKey($type, $id)] = $label;
+      }
+      if (count($options) === 50) { break; }
+    }
+    return $options;
+  }
+
+  protected function auditActorLabel(string $key): ?string
+  {
+    $actor = json_decode(base64_decode($key, true) ?: '', true);
+
+    return is_array($actor) && array_is_list($actor) && count($actor) === 2 && is_string($actor[0]) && is_string($actor[1]) ? $this->auditIdentity($actor[0], $actor[1]) : null;
+  }
+
+  protected function whereAuditActor(Builder $query, mixed $key): Builder
+  {
+    $actor = is_string($key) ? json_decode(base64_decode($key, true) ?: '', true) : null;
+
+    return is_array($actor) && array_is_list($actor) && count($actor) === 2 && is_string($actor[0]) && is_string($actor[1])
+      ? $query->where('administrator_type', $actor[0])->where('administrator_id', $actor[1]) : $query->whereRaw('1 = 0');
   }
 
   public function getTableRecordsPerPage(): int
