@@ -53,7 +53,8 @@ class AiWriterAction extends Action
   public static function make(?string $name = null): static
   {
     return parent::make($name ?? "ai_writer")
-      ->label("")
+      ->label(__('filament-ai-writer::writer.label'))
+      ->iconButton()
       ->icon(Icons::resolve(Icons::ACTION))
       ->color(Color::Fuchsia)
       ->tooltip(__('filament-ai-writer::writer.label'));
