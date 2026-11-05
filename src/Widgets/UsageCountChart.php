@@ -52,7 +52,8 @@ class UsageCountChart extends ChartWidget
       'datasets' => [[
         'label' => __('filament-ai-writer::statistics.chart.series'),
         'data' => array_map(fn (array $row): int => $row['delivered'] + $row['failed'] + $row['active'], $rows),
-        'borderWidth' => 0, 'borderRadius' => 2, 'maxBarThickness' => 48,
+        // Filament's outline carries the contrast: its fill alone is nearly invisible on dark panels.
+        'borderRadius' => 2, 'maxBarThickness' => 48,
       ]],
     ];
   }
