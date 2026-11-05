@@ -3,6 +3,8 @@ namespace PdroLucas\FilamentAiWriter\Actions;
 
 use Filament\Actions\Action;
 use Filament\Facades\Filament;
+use Filament\Forms\Components\Field;
+use Filament\Forms\Components\RichEditor;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\Toggle;
@@ -11,8 +13,13 @@ use Filament\Schemas\Components\Utilities\Set;
 use Filament\Schemas\Components\Utilities\Get;
 use Filament\Support\Colors\Color;
 use Illuminate\Support\Str;
-use PdroLucas\FilamentAiWriter\Contracts\AiProvider;
+use PdroLucas\FilamentAiWriter\AiWriterPlugin;
+use PdroLucas\FilamentAiWriter\Data\GenerateResult;
+use PdroLucas\FilamentAiWriter\Exceptions\GenerationFailure;
+use PdroLucas\FilamentAiWriter\Generation\Generation;
+use PdroLucas\FilamentAiWriter\Support\FailureNotice;
 use PdroLucas\FilamentAiWriter\Events\AiTextGenerated;
+use PdroLucas\FilamentAiWriter\Support\Icons;
 
 class AiWriterAction extends Action
 {
@@ -33,16 +40,26 @@ class AiWriterAction extends Action
   /** @var callable|null */
   protected $beforeGenerateCallback = null;
 
+  /**
+   * Generation commits its own admission, delivery and settlement, and refuses to run inside an open
+   * transaction. A panel's databaseTransactions() would wrap this action in one, so it never opts in.
+   */
+  public function hasDatabaseTransactions(): bool
+  {
+    return false;
+  }
+
   /** @var callable|null */
   protected static $globalBeforeGenerateCallback = null;
 
   public static function make(?string $name = null): static
   {
     return parent::make($name ?? "ai_writer")
-      ->label("")
-      ->icon("heroicon-o-sparkles")
+      ->label(__('filament-ai-writer::writer.label'))
+      ->iconButton()
+      ->icon(Icons::resolve(Icons::ACTION))
       ->color(Color::Fuchsia)
-      ->tooltip("Generate with AI");
+      ->tooltip(__('filament-ai-writer::writer.label'));
   }
 
   public function targetField(string $field): static
@@ -135,9 +152,9 @@ class AiWriterAction extends Action
   {
     parent::setUp();
 
-    $this->modalHeading(fn() => $this->silent ? null : "Generate with AI")
-      ->modalDescription(fn() => $this->silent ? null : "Describe what you want to write.")
-      ->modalSubmitAction(fn($action) => $action->color("primary")->label($this->silent ? "" : "Generate"))
+    $this->modalHeading(fn() => $this->silent ? null : __('filament-ai-writer::writer.label'))
+      ->modalDescription(fn() => $this->silent ? null : __('filament-ai-writer::writer.modal.description'))
+      ->modalSubmitAction(fn($action) => $action->color("primary")->label($this->silent ? "" : __('filament-ai-writer::writer.modal.submit')))
       ->successNotification(null)
       ->form(function (): array {
         if ($this->silent) {
@@ -146,8 +163,8 @@ class AiWriterAction extends Action
 
         $fields = [
           Textarea::make("ai_input")
-            ->label("What do you want to write?")
-            ->placeholder("Briefly describe...")
+            ->label(__('filament-ai-writer::writer.input.label'))
+            ->placeholder(__('filament-ai-writer::writer.input.placeholder'))
             ->required()
             ->minLength(10)
             ->rows(4)
@@ -157,62 +174,62 @@ class AiWriterAction extends Action
 
         if ($this->showToneControl) {
           $fields[] = Select::make("ai_tone")
-            ->label("Tone")
-            ->options([
-              "professional" => "Professional",
-              "casual" => "Casual",
-              "formal" => "Formal",
-              "friendly" => "Friendly",
-              "persuasive" => "Persuasive",
-            ])
-            ->placeholder("Default")
+            ->label(__('filament-ai-writer::writer.tone.label'))
+            ->options(collect(["professional", "casual", "formal", "friendly", "persuasive"])->mapWithKeys(fn (string $tone) => [$tone => __('filament-ai-writer::writer.tone.' . $tone)])->all())
+            ->placeholder(__('filament-ai-writer::writer.tone.default'))
             ->native(false);
         }
 
         if ($this->showLengthControl) {
           $fields[] = Select::make("ai_length")
-            ->label("Length")
-            ->options([
-              "short" => "Short",
-              "medium" => "Medium",
-              "long" => "Long",
-            ])
-            ->placeholder("Default")
+            ->label(__('filament-ai-writer::writer.length.label'))
+            ->options(collect(["short", "medium", "long"])->mapWithKeys(fn (string $length) => [$length => __('filament-ai-writer::writer.length.' . $length)])->all())
+            ->placeholder(__('filament-ai-writer::writer.tone.default'))
             ->native(false);
         }
 
         if ($this->showEmojiControl) {
-          $fields[] = Toggle::make("ai_emojis")->label("Use emojis")->default(false);
+          $fields[] = Toggle::make("ai_emojis")->label(__('filament-ai-writer::writer.emojis.label'))->default(false);
         }
 
         return $fields;
       })
       ->action(function (array $data, Get $get, Set $set): void {
+        if (!$this->authorizeGeneration()) {
+          return;
+        }
+
         if (!$this->runBeforeGenerateHooks()) {
           return;
         }
 
-        if ($this->silent) {
-          $this->runSilent($get, $set);
-        } else {
-          $provider = app(AiProvider::class);
-          $prompt = $this->buildPromptWithControls($this->aiPrompt, $data);
-          $result = $provider->generate($prompt, $data["ai_input"]);
-
-          if ($this->expectArray) {
-            $parsed = $this->parseArrayResult($result, $this->normalizeArrayCase);
-
-            $set($this->targetField, $parsed);
-            $this->dispatchEvent($this->targetField, $result);
-            $this->notifyGenerationSuccess();
-            return;
+        try {
+          if ($this->silent) {
+            $this->runSilent($get, $set);
+          } else {
+            $this->generateAndDeliver($this->buildPromptWithControls($this->aiPrompt, $data), $data["ai_input"], $get, $set);
           }
-
-          $set($this->targetField, trim($result));
-          $this->dispatchEvent($this->targetField, $result);
-          $this->notifyGenerationSuccess();
+        } catch (GenerationFailure $failure) {
+          FailureNotice::send($failure);
         }
       });
+  }
+
+  protected function authorizeGeneration(): bool
+  {
+    // Without a registered plugin the action runs standalone, as in 0.7.1: only its own authorization applies.
+    $plugin = AiWriterPlugin::current();
+
+    if (($plugin !== null && !$plugin->canUseAi()) || !$this->isAuthorized()) {
+      Notification::make()
+        ->warning()
+        ->title(__('filament-ai-writer::failures.unauthorized'))
+        ->send();
+
+      return false;
+    }
+
+    return true;
   }
 
   protected function buildPromptWithControls(string $basePrompt, array $data)
@@ -265,18 +282,71 @@ class AiWriterAction extends Action
     return true;
   }
 
-  protected function dispatchEvent(string $field, string $rawResult): void
+  protected function dispatchEvent(string $field, GenerateResult $result): void
   {
-    $provider = config("filament-ai-writer.provider");
-    $model = config("filament-ai-writer.{$provider}.model");
+    // The text is already delivered and charged; a failing host listener must not lose it.
+    try {
+      AiTextGenerated::dispatch([
+        "user" => Filament::auth()->user(),
+        "field" => $field,
+        "provider" => $result->provider,
+        "model" => $result->model,
+        "result" => $result->text,
+      ]);
+    } catch (\Throwable $exception) {
+      report($exception);
+    }
+  }
 
-    AiTextGenerated::dispatch([
-      "user" => Filament::auth()->user(),
-      "field" => $field,
-      "provider" => $provider,
-      "model" => $model,
-      "result" => $rawResult,
-    ]);
+  protected function generateAndDeliver(string $prompt, string $input, Get $get, Set $set): void
+  {
+    $original = $get($this->targetField);
+    $result = app(Generation::class)->run($prompt, $input, function (GenerateResult $result) use ($set): void {
+      $value = trim($result->text);
+      if ($this->silent && !empty($this->valueMap)) {
+        if (!array_key_exists($value, $this->valueMap)) {
+          throw new GenerationFailure('invalid_output', result: $result->withoutText());
+        }
+      } elseif ($this->silent && !empty($this->allowedValues)) {
+        $value = $this->filterAllowedValues($this->parseArrayResult($result->text));
+      } elseif ($this->expectArray) {
+        $value = $this->parseArrayResult($result->text, $this->normalizeArrayCase);
+      } elseif ($this->targetsRichEditor()) {
+        $value = $this->plainTextToHtml($value);
+      }
+      if ($value === '' || $value === []) {
+        throw new GenerationFailure('invalid_output', result: $result->withoutText());
+      }
+      $set($this->targetField, $value);
+    }, fn () => $set($this->targetField, $original), $this->targetField, actionName: $this->getName());
+    $this->getLivewire()?->dispatch('ai-writer-credits-changed');
+    $this->dispatchEvent($this->targetField, $result);
+    $this->notifyGenerationSuccess();
+  }
+
+  protected function targetsRichEditor(): bool
+  {
+    $component = $this->getSchemaComponent();
+    $target = $component instanceof Field && $component->getName() === $this->targetField
+      ? $component
+      : $component?->getContainer()->getComponent(fn ($candidate): bool => $candidate instanceof Field && $candidate->getName() === $this->targetField, withActions: false);
+
+    return $target instanceof RichEditor;
+  }
+
+  /** Models answer in plain text; a rich editor would collapse its line breaks into one paragraph. Markup is kept as given. */
+  protected function plainTextToHtml(string $text): string
+  {
+    if (preg_match('/<\/?[a-z][a-z0-9]*(\s[^<>]*)?\/?>/i', $text)) {
+      return $text;
+    }
+
+    $paragraphs = preg_split('/\R\s*\R/u', str_replace("\r\n", "\n", $text)) ?: [$text];
+
+    return implode('', array_map(
+      fn (string $paragraph): string => '<p>' . implode('<br>', array_map('e', preg_split('/\R/u', trim($paragraph)))) . '</p>',
+      array_filter($paragraphs, fn (string $paragraph): bool => trim($paragraph) !== ''),
+    ));
   }
 
   protected function runSilent(Get $get, Set $set): void
@@ -286,9 +356,9 @@ class AiWriterAction extends Action
     if (!empty($missingFields)) {
       Notification::make()
         ->warning()
-        ->title("Missing context")
+        ->title(__('filament-ai-writer::writer.missing.title'))
         ->color("warning")
-        ->body("Fill in the following fields first: " . implode(", ", $missingFields))
+        ->body(__('filament-ai-writer::writer.missing.body', ['fields' => implode(', ', $missingFields)]))
         ->send();
       return;
     }
@@ -298,46 +368,14 @@ class AiWriterAction extends Action
       ->map(fn($value, $field) => "{$field}: {$value}")
       ->join("\n");
 
-    $provider = app(AiProvider::class);
-
+    $input = "Context:\n{$context}";
     if (!empty($this->valueMap)) {
-      $mapHint =
-        "\n\nAvailable options (return ONLY the key, nothing else):\n" .
+      $input .= "\n\nAvailable options (return ONLY the key, nothing else):\n" .
         collect($this->valueMap)->map(fn($name, $id) => "{$id}: {$name}")->join("\n");
-
-      $result = trim($provider->generate($this->aiPrompt, "Context:\n{$context}{$mapHint}"));
-      $set($this->targetField, $result);
-      $this->dispatchEvent($this->targetField, $result);
-      $this->notifyGenerationSuccess();
-      return;
+    } elseif (!empty($this->allowedValues)) {
+      $input .= "\n\nYou MUST return only values from this list, as a JSON array:\n" . json_encode($this->allowedValues);
     }
-
-    if (!empty($this->allowedValues)) {
-      $valuesHint =
-        "\n\nYou MUST return only values from this list, as a JSON array:\n" . json_encode($this->allowedValues);
-
-      $result = $provider->generate($this->aiPrompt, "Context:\n{$context}{$valuesHint}");
-      $parsedValues = $this->parseArrayResult($result);
-      $filtered = $this->filterAllowedValues($parsedValues);
-      $set($this->targetField, $filtered);
-      $this->dispatchEvent($this->targetField, $result);
-      $this->notifyGenerationSuccess();
-      return;
-    }
-
-    $result = $provider->generate($this->aiPrompt, "Context:\n{$context}");
-
-    if ($this->expectArray) {
-      $parsed = $this->parseArrayResult($result, $this->normalizeArrayCase);
-      $set($this->targetField, $parsed);
-      $this->dispatchEvent($this->targetField, $result);
-      $this->notifyGenerationSuccess();
-      return;
-    }
-
-    $set($this->targetField, trim($result));
-    $this->dispatchEvent($this->targetField, $result);
-    $this->notifyGenerationSuccess();
+    $this->generateAndDeliver($this->aiPrompt, $input, $get, $set);
   }
 
   protected function parseArrayResult(string $result, bool $normalizeCase = false): array
@@ -422,6 +460,6 @@ class AiWriterAction extends Action
 
   protected function notifyGenerationSuccess(): void
   {
-    Notification::make()->success()->title("Generated successfully")->color("success")->send();
+    Notification::make()->success()->title(__('filament-ai-writer::writer.success'))->color("success")->send();
   }
 }

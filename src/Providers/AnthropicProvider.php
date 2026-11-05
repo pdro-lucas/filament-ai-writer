@@ -2,27 +2,20 @@
 
 namespace PdroLucas\FilamentAiWriter\Providers;
 
-use Illuminate\Support\Facades\Http;
-use PdroLucas\FilamentAiWriter\Contracts\AiProvider;
+use PdroLucas\FilamentAiWriter\Data\GenerateResult;
 
-class AnthropicProvider implements AiProvider
+class AnthropicProvider extends HttpProvider
 {
-  public function generate(string $systemPrompt, string $userInput): string
+  protected const PROVIDER = 'anthropic';
+
+  public function generate(string $systemPrompt, string $userInput): GenerateResult
   {
-    $config = config("filament-ai-writer.anthropic");
-
-    $response = Http::withToken($config["api_key"])
-      ->connectTimeout(5)
-      ->timeout(30)
-      ->withHeaders(["anthropic-version" => "2023-06-01"])
-      ->post("https://api.anthropic.com/v1/messages", [
-        "model" => $config["model"],
-        "max_tokens" => config("filament-ai-writer.max_tokens"),
-        "system" => $systemPrompt,
-        "messages" => [["role" => "user", "content" => $userInput]],
-      ])
-      ->throw();
-
-    return $response->json("content.0.text", "");
+    $settings = $this->settings();
+    return $this->send($settings, 'https://api.anthropic.com/v1/messages', [
+      'x-api-key' => $settings['api_key'], 'anthropic-version' => '2023-06-01',
+    ], [
+      'model' => $settings['model'], 'max_tokens' => $settings['max_tokens'], 'system' => $systemPrompt,
+      'messages' => [['role' => 'user', 'content' => $userInput]],
+    ]);
   }
 }

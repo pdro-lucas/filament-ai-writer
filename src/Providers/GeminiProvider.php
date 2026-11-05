@@ -2,29 +2,21 @@
 
 namespace PdroLucas\FilamentAiWriter\Providers;
 
-use Illuminate\Support\Facades\Http;
-use PdroLucas\FilamentAiWriter\Contracts\AiProvider;
+use PdroLucas\FilamentAiWriter\Data\GenerateResult;
 
-class GeminiProvider implements AiProvider
+class GeminiProvider extends HttpProvider
 {
-  public function generate(string $systemPrompt, string $userInput): string
+  protected const PROVIDER = 'gemini';
+
+  public function generate(string $systemPrompt, string $userInput): GenerateResult
   {
-    $config = config("filament-ai-writer.gemini");
-
-    $response = Http::connectTimeout(5)
-      ->timeout(30)
-      ->post(
-        "https://generativelanguage.googleapis.com/v1beta/models/{$config["model"]}:generateContent?key={$config["api_key"]}",
-        [
-          "system_instruction" => ["parts" => [["text" => $systemPrompt]]],
-          "contents" => [["parts" => [["text" => $userInput]]]],
-          "generationConfig" => [
-            "maxOutputTokens" => config("filament-ai-writer.max_tokens"),
-          ],
-        ],
-      )
-      ->throw();
-
-    return $response->json("candidates.0.content.parts.0.text", "");
+    $settings = $this->settings();
+    return $this->send($settings, 'https://generativelanguage.googleapis.com/v1beta/models/' . rawurlencode($settings['model']) . ':generateContent', [
+      'x-goog-api-key' => $settings['api_key'],
+    ], [
+      'system_instruction' => ['parts' => [['text' => $systemPrompt]]],
+      'contents' => [['parts' => [['text' => $userInput]]]],
+      'generationConfig' => ['maxOutputTokens' => $settings['max_tokens'], 'candidateCount' => 1],
+    ]);
   }
 }

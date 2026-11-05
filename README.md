@@ -1,17 +1,19 @@
 # filament-ai-writer
 
-https://github.com/user-attachments/assets/05b8f24e-e01e-4acc-836a-32acda143b42
+![Filament AI Writer: AI text in any form field, with credits, limits and usage you control](art/cover.png)
 
 
-A reusable Filament Action that adds AI-powered text generation to any form field. Supports Anthropic Claude, OpenAI, Google Gemini, and OpenRouter out of the box.
+A Filament plugin for AI-assisted writing, with per-panel registration, host-defined permissions and a shared generation service. Its form action integrates OpenAI, Anthropic, Gemini and OpenRouter with scalar and array fields. Supported endpoints do not imply support for every model or optional API feature.
 
-> **Status: Beta** — This package is in active development. APIs may change and issues can occur.
+## Documentation
+
+Start with [installation](#installation), [panel registration](#panel-plugin) and the [writing examples](#usage). Coming from 0.7.1? Read the [upgrade guide](docs/upgrade.md): the action alone needs nothing new. See the [integration guide](docs/integration.md) for administration, scoped directories, custom action placement, credits, translations and presentation. Reporting and maintenance are covered in [statistics](#current-panel-statistics) and [retention](#opt-in-usage-retention).
 
 ## Requirements
 
-- PHP 8.1+
-- Laravel 10, 11, or 12
-- Filament 4.x
+- PHP 8.2+
+- Laravel 11.28+ or 12.x
+- Filament 4.15.3+ (Livewire 3) or 5.x (Livewire 4)
 
 ## Installation
 
@@ -19,17 +21,24 @@ A reusable Filament Action that adds AI-powered text generation to any form fiel
 composer require pdro-lucas/filament-ai-writer
 ```
 
-The service provider is auto-discovered by Laravel. No manual registration needed.
+The Laravel service provider is auto-discovered. `AiWriterAction` works on its own: without registering the plugin and without migrations, it calls the configured provider and fills the field. Register the plugin to add permissions and opt-in modules. Install the package tables only when you enable [usage tracking](#optional-modules):
+
+```bash
+php artisan vendor:publish --tag=filament-ai-writer-migrations
+php artisan migrate
+```
+
+The package does not automatically run migrations. To customize the usage table name, publish the configuration and set `tables.usage` **before** running the migration; keep that name stable afterward. No changes to the host's user table are required.
 
 ## Configuration
 
 Add your API key to `.env` depending on which provider you want to use:
 
 ```env
-# Anthropic (default)
+# Anthropic (requires an explicit AI_WRITER_MODEL)
 ANTHROPIC_API_KEY=sk-ant-...
 
-# OpenAI
+# OpenAI (default)
 OPENAI_API_KEY=sk-...
 
 # Google Gemini
@@ -42,13 +51,11 @@ OPENROUTER_API_KEY=sk-or-...
 To switch providers or customize the model, add the following variables:
 
 ```env
-AI_WRITER_PROVIDER=anthropic   # anthropic | openai | gemini | openrouter
-AI_WRITER_MODEL=claude-sonnet-4-20250514
+AI_WRITER_PROVIDER=openai   # anthropic | openai | gemini | openrouter
+AI_WRITER_MODEL=gpt-4o
 AI_WRITER_MAX_TOKENS=2048
 AI_WRITER_CONNECT_TIMEOUT=10
 AI_WRITER_TIMEOUT=60
-AI_WRITER_RETRY_TIMES=2
-AI_WRITER_RETRY_SLEEP_MS=500
 ```
 
 If you need to customize the full configuration, publish the config file:
@@ -57,11 +64,143 @@ If you need to customize the full configuration, publish the config file:
 php artisan vendor:publish --tag=filament-ai-writer
 ```
 
-This creates `config/filament-ai-writer.php` in your project where you can set per-provider models, API keys, and token limits. Publishing is optional — the package works with just the `.env` variables.
+This creates `config/filament-ai-writer.php` in your project where you can set per-provider models, API keys, and token limits. Publishing configuration is optional when using the default table name and no host tariffs; publishing and running the migrations is required only for usage tracking.
+
+## Panel plugin
+
+Register a separate instance in each panel's `PanelProvider`:
+
+```php
+use Illuminate\Contracts\Auth\Authenticatable;
+use Illuminate\Support\Facades\Gate;
+use PdroLucas\FilamentAiWriter\AiWriterPlugin;
+
+$panel->plugin(
+    AiWriterPlugin::make()
+        ->authorizeUseAi(fn (Authenticatable $user, $panel): bool =>
+            Gate::forUser($user)->allows('use-ai-writer'))
+        ->authorizeViewStatistics(fn (Authenticatable $user, $panel): bool =>
+            Gate::forUser($user)->allows('view-ai-writer-statistics'))
+        ->authorizeManage(fn (Authenticatable $user, $panel): bool =>
+            Gate::forUser($user)->allows('manage-ai-writer')),
+);
+```
+
+Callbacks receive the authenticated actor from that panel's guard and the panel itself. No User class, roles, columns or key type are required. Guests are denied. Authenticated actors may use AI by default; statistics and administration are denied unless their independent callbacks allow them. `AiWriterPlugin::get()` resolves the plugin on the current panel.
+
+When the plugin is registered, the action enforces the panel's use permission and any host action-level authorization on the server before running generation hooks or contacting the provider. Interactive and silent actions use the same checks. Permissions are checked again on later requests, including submission of a modal opened before permission was revoked. A host `->authorize(true)` cannot bypass plugin authorization; host action authorization can further restrict access.
+
+These callbacks can use permissions managed by **Filament Shield / Spatie Laravel Permission**, or host rules based on roles, user types and plans. See the [Shield and business-rule examples](docs/integration.md#filament-shield-roles-and-business-rules) for custom permissions, role assignment, Gate callbacks, guards and Super Admin behavior. Neither permission package is a dependency of AI Writer.
+
+### Optional modules
+
+A registered plugin with no modules behaves like the standalone action: no pages, routes or render hooks, and no package table is read. Enable modules per panel:
+
+```php
+AiWriterPlugin::make()
+    ->usageTracking()  // or ->usageTracking(fn (Panel $panel): bool => ...)
+    ->controls();      // requires usageTracking()
+```
+
+`usageTracking()` records each generation in the metadata-only usage ledger, deduplicates operations, gives each one an execution deadline that `ai-writer:recover-operations` can close, and registers the **AI Writer usage** statistics page (still gated by `authorizeViewStatistics()`). It does not read or reserve credits, blocks or abuse settings.
+
+`controls()` adds admission under one scope lock: AI availability, actor blocks, credits and abuse protection, plus the **AI Writer controls** page and the credits indicator (with its popover). The **My AI credits** page is opt-in with `creditsPage()`. It requires `usageTracking()`; enabling it alone throws a configuration error when the panel registers. Both modules use the same four package migrations (`000001`–`000004`): they build on each other and are published together.
+
+Each closure receives the panel and is evaluated in two stages: once when the panel registers, which decides which pages, routes and render hooks exist; and again on every request, so turning a module off also denies already mounted pages, hides the credits indicator and changes how new generations run. Turning `controls()` off never deletes stored settings, balances or audit entries; turning it back on resumes them. Operations admitted while controls were on keep their own accounting: delivery consumes, and failure or recovery releases, the reservation they made, even if controls are off by then. Generations admitted while controls are off are not charged and do not count toward abuse limits later. With the modules off, `ai-writer:prune-usage` and `ai-writer:recover-operations` succeed without changes when the tables are not installed.
+
+## Controls, credits and integration
+
+The plugin ships three native panel pages (My AI credits is off until you call `creditsPage()`):
+
+| Surface | Required permission | Purpose |
+| --- | --- | --- |
+| **AI Writer controls** (`ai-writer-controls`) | `authorizeManage()` | Settings for availability, quotas and abuse protections; Users with a reusable Manage AI modal; paginated Activity audit |
+| **My AI credits** (`my-ai-credits`, opt-in) | `authorizeUseAi()` | The authenticated actor's availability, balance and protection status |
+| **AI Writer usage** (`ai-writer-usage`) | `authorizeViewStatistics()` | Read-only metadata statistics for the current panel |
+
+AI starts enabled, with quotas and all abuse protections off. No business limits are supplied. Management changes write an audit entry atomically. A reason of at most 500 characters is required for actions against one person (block/unblock, individual limit, extra credits, period reset) and for renewing everyone; it is optional for global settings, including pausing AI, which is a single click without a dialog. Blocking a person and renewing everyone ask for confirmation in a dialog. Use `requireReason(true)` to require a reason everywhere or `requireReason(false)` nowhere (a `Closure` may take `$panel` and the audited `?string $action`, which is `null` when read through `getRequireReason()` without an action); the services refuse a missing required reason on the server, whatever the interface does. Disabling AI or blocking an actor prevents **new admissions**; already admitted generations retain their delivery rights and execution deadlines. Quotas off does not override availability, blocks or permissions, and enabling quotas never retroactively charges a free generation.
+
+Configure an explicit, scoped actor directory to manage users before their first generation. The plugin never infers a host User model, tenant column, display name or email. Return `ActorIdentity` with a human label in both search and resolve callbacks. Without a directory the Users tab is hidden and its section cannot be opened; Settings shows managers a link to the setup guide. The resolver remains required when embedding Manage AI in your own Resource with the built-in Users tab off.
+
+Choose what appears on each panel instance:
+
+```php
+use PdroLucas\FilamentAiWriter\AiWriterPlugin;
+
+AiWriterPlugin::make()
+    ->usersTab(false)           // Keep Settings/Activity; manage users in your Resource.
+    ->creditsIndicator(false);  // Hide the credits indicator; enforcement is unchanged.
+```
+
+### Pages and navigation
+
+Each page has a class setter that takes `true` (built-in), a concrete subclass, `false` (no page and no route) or a `Closure` returning either; they are resolved when the panel registers the plugin. Disabling a page never changes permissions or the service behind it. A subclass replaces the original page, so the route is registered once.
+
+```php
+AiWriterPlugin::make()
+    ->statisticsPage(App\Filament\Pages\TeamUsage::class) // or false
+    ->controlsPage()                                        // true by default
+    ->creditsPage()                                         // off by default
+    ->navigationGroup('Administration')                     // default for all three pages
+    ->cluster(App\Filament\Clusters\Ai::class)
+    ->controlsNavigationLabel('AI settings')                // per page, wins over the default
+    ->statisticsNavigationIcon('heroicon-o-chart-bar')
+    ->creditsNavigationSort(30)
+    ->creditsSlug('my-credits')
+    ->statisticsNavigation(false);                          // hide from the menu, keep the route
+```
+
+Per page (`statistics…`, `controls…`, `credits…`): `NavigationGroup`, `NavigationLabel`, `NavigationIcon`, `NavigationSort`, `Slug`, `Cluster` and `Navigation` (menu visibility), each with a `get…()` getter (`has…()` for visibility). Plugin-wide defaults, used when a page has no value: `navigationGroup()`, `navigationIcon()`, `navigationSort()`, `cluster()` and `navigation()`. Values may be `Closure`s evaluated with `$panel` on each use. A value set on the plugin wins over a subclass's static properties. Without any setting the pages share a translatable **AI Writer** navigation group, except pages in a cluster, which get no built-in group. Pass `false` to `navigationGroup()` or a page's `…NavigationGroup()` for explicitly no group. A cluster given to `cluster()` or `…Cluster()` must be registered or discovered on the panel by the host (for example `discoverClusters()`).
+
+### Credits indicator
+
+```php
+AiWriterPlugin::make()
+    ->creditsIndicator()                                       // on/off
+    ->creditsIndicatorRenderHook(PanelsRenderHook::SIDEBAR_NAV_START) // any PanelsRenderHook; default USER_MENU_BEFORE
+    ->creditsIndicatorIcon('heroicon-o-bolt')
+    ->creditsIndicatorColor('warning')
+    ->creditsIndicatorLabel(fn (array $balance): string => $balance['available'] . ' left');
+```
+
+The indicator opens a keyboard-accessible popover with the signed-in user's own balance, renewal date and usage; it takes no target. It appears only in the configured hook, only with `controls()` on and quotas enabled.
+
+Plugin API conventions: every on/off or text setter accepts a value or a `Closure` (`bool|Closure`, `string|Closure`) and is evaluated when used, not when the plugin is configured. Closures can type-hint or name `$panel` and, for authorization and `scope()`, `$actor` (also available as `$user`). Each setter has a matching getter (`usersTab()` / `hasUsersTab()`, `scope()` / `getScope()`, `authorizeManage()` / `canManage()`). Setters are grouped by feature prefix: `usageTracking()`, `controls()`, `statisticsPage()`, `controlsPage()`, `creditsPage()`, the per-page navigation setters (`statistics…`, `controls…`, `credits…`), `creditsIndicator()` and `creditsIndicator*()`, `requireReason()`, `usersTab()`, `authorize*()` and `scope()`. Module and page switches also decide which pages and routes exist, so they are read when the panel registers the plugin as well as on later requests.
+
+### Controls sections
+
+The Controls page has three sections (Settings, Users, Activity), bound to the URL: `/ai-writer-controls?section=activity` opens Activity, survives a reload and works with the browser's back button. An unknown or unavailable value (for example `users` without an actor directory) falls back to the first available section, and every section is re-authorized on the server. A subclass passed to `controlsPage()` can change the list and order by overriding `sections()`. A reason of at most 500 characters is required for actions against one person and when renewing everyone, and optional elsewhere; `requireReason()` changes that for every action or just some.
+
+### Messages, translations and formats
+
+People who generate text see a short message they can act on. Quota, block and frequency denials stay specific, with the renewal date when there is one. Technical failures show a generic message with a reference code, and the log keeps the detail under the same `reference`; only `authorizeManage()` users see it in the notification. All text lives in the package's `en` and `pt_BR` translations (`php artisan vendor:publish --tag=filament-ai-writer-translations`; your published keys win). Dates follow your Filament format and timezone, even per user, and costs use the configurable `currency` of the config file. Details in the [integration guide](docs/integration.md#messages-translations-and-formats).
+
+### Native look and metric widgets
+
+Every screen uses only Filament components and tokens, so your theme (colors, radius, font, dark mode) applies; the package ships no CSS. `UsageOverviewStats` and `UsageCountChart` are ordinary widgets: register them on your own dashboard with `$panel->widgets([...])` and they respect `authorizeViewStatistics()`. Icons can be replaced with `FilamentIcon` aliases. See [Customize presentation](docs/integration.md#customize-presentation) for the aliases and the few public CSS hooks.
+
+These options do not revoke permissions. Authorization callbacks enforce access on the server, including later Livewire requests. AI availability, quotas, abuse protections, navigation visibility and retention are separate controls.
+
+The [integration guide](docs/integration.md) provides:
+
+- [Complete panel setup and a scoped actor directory](docs/integration.md#panel-setup-and-a-scoped-actor-directory).
+- [Disable options and navigation-only customization](docs/integration.md#choose-what-to-disable).
+- [Manage AI in Resource tables, record headers and custom pages](docs/integration.md#manage-ai-in-your-own-surfaces).
+- [Writer actions in field suffixes and schema section headers](docs/integration.md#place-the-writing-action).
+- [Own-credit APIs, native schema embedding and indicator refresh](docs/integration.md#show-personal-credit-status).
+- [Error messages, translations, date formats and currency](docs/integration.md#messages-translations-and-formats).
+- [Themes, view overrides and page subclasses](docs/integration.md#customize-presentation).
+- [Quota, abuse, deployment and recovery contracts](docs/integration.md#credits-deployment-and-recovery).
+
+### Upgrading an existing installation
+
+Writer actions keep working without the plugin and without migrations. Register the plugin in each panel that needs permissions, add `usageTracking()` for usage history and `controls()` for credits and administration. Service-provider discovery does not register a panel plugin. Remove temporary `authorize()` or `beforeGenerate()` callbacks that only duplicated plugin checks; retain application-specific restrictions. Actions outside a current Filament panel are unsupported.
+
+The [upgrade guide](docs/upgrade.md) lists what each layer needs, how authorization closures are resolved (by name or type), that `authorize*()` without an argument grants everyone, and that databases from the PR #21 build need `migrate:fresh`. With `usageTracking()` or `controls()` enabled, publish **new** migrations and run them before generating; missing storage or a failing scope resolver refuses generation rather than bypassing stored policy. For installations that already run migrations `000003` (credits) and `000004` (abuse), follow the [cutover details](docs/integration.md#credits-deployment-and-recovery): pause admissions, drain old operations and stop old writers before migrating.
 
 ## Usage
 
-Import the action and attach it to any Filament form field using `hintAction` or `suffixAction`.
+Import the action and attach it to a Filament field using `hintAction`, or `suffixAction` on a field that supports affixes. For other placements, see the [native form examples](docs/integration.md#place-the-writing-action).
 
 ```php
 use PdroLucas\FilamentAiWriter\Actions\AiWriterAction;
@@ -275,24 +414,7 @@ TextInput::make('meta_description')
 
 Register a global callback that runs before every AI generation across all action instances. Typically called in `AppServiceProvider::boot()`. The instance-level `->beforeGenerate()` runs after this global hook.
 
-```php
-// AppServiceProvider
-use PdroLucas\FilamentAiWriter\Actions\AiWriterAction;
-
-public function boot(): void
-{
-    AiWriterAction::globalBeforeGenerate(function (): bool {
-        if (auth()->user()->cannot('use-ai-writer')) {
-            Notification::make()
-                ->warning()
-                ->title('AI writing is not available')
-                ->send();
-            return false;
-        }
-        return true;
-    });
-}
-```
+Use the plugin permission callbacks for authorization; no manual authorization hook is required. Hooks can still veto generation for application-specific business rules before admission.
 
 ### `AiTextGenerated` event
 
@@ -338,7 +460,7 @@ class DebitUserCredits
 
 | Provider  | Default model              | Environment variable |
 |-----------|----------------------------|----------------------|
-| Anthropic | `claude-sonnet-4-20250514` | `ANTHROPIC_API_KEY`  |
+| Anthropic | none (set `AI_WRITER_MODEL`) | `ANTHROPIC_API_KEY`  |
 | OpenAI    | `gpt-4o`                   | `OPENAI_API_KEY`     |
 | Gemini    | `gemini-3.1-flash-lite`    | `GEMINI_API_KEY`     |
 | OpenRouter | none (set `AI_WRITER_MODEL`) | `OPENROUTER_API_KEY` |
@@ -353,7 +475,95 @@ OPENROUTER_API_KEY=sk-or-...
 AI_WRITER_MODEL=openai/gpt-4o-mini
 ```
 
-The provider sends your `app.url` and `app.name` as the `HTTP-Referer` and `X-Title` headers for OpenRouter attribution, and uses the `AI_WRITER_CONNECT_TIMEOUT`, `AI_WRITER_TIMEOUT`, `AI_WRITER_RETRY_TIMES` and `AI_WRITER_RETRY_SLEEP_MS` settings.
+The provider sends your `app.url` and `app.name` as the `HTTP-Referer` and `X-Title` headers for OpenRouter attribution. All four providers use `AI_WRITER_CONNECT_TIMEOUT` and `AI_WRITER_TIMEOUT`.
+
+### Provider results and beta interface upgrade
+
+Custom providers now implement `AiProvider::generate(string $systemPrompt, string $userInput): GenerateResult`, replacing the old string return. Rebind the same `AiProvider` contract in the host container; custom provider identifiers remain supported.
+
+```php
+use PdroLucas\FilamentAiWriter\Data\GenerateResult;
+
+return new GenerateResult(
+    provider: 'my-provider',
+    requestedModel: 'requested-model',
+    model: 'returned-model',
+    text: 'Generated text',
+);
+```
+
+The immutable result holds visible text in memory, requested and returned models separately, inclusive input/output token totals, optional cache/read/write/reasoning details, response/request IDs, finish reason and HTTP duration in milliseconds. Unknown or inconsistent measurements remain `null`; cache and reasoning are already included in their totals and are not added again. A returned model that is absent stays unknown.
+
+`outcome` is `text`, `empty`, `refused` or `incomplete`. Only usable `text` is delivered. Empty, refused, malformed and truncated responses preserve the original field; invalid selections and empty parsed arrays also preserve it. No success event is emitted for those outcomes. Internal thought blocks are excluded. Available usage is recorded even when the result cannot be delivered.
+
+**User-facing failure messages:** people who generate text see either a specific, actionable denial (AI disabled, blocked, credits exhausted with the renewal date when there is one, request frequency, concurrency, failure pause, unusable output) or, for technical failures (storage, migrations, configuration, provider, transaction), a short generic message with a reference code such as `AIW-7K2M9QXD`. The technical detail is written to the application log (`AI Writer generation failed.`) with the same `reference`, the failure code, safe IDs and the class and `file:line` where the cause was thrown (storage and controls causes also carry their stack; provider causes never log their message). Only users allowed by `authorizeManage()` also see the detail in the notification; with no plugin registered nobody does.
+
+Providers throw `GenerationFailure` for configuration, transport, protocol or upstream failures. It carries a local safe failure code, status, safe IDs, duration, outcome-unknown flag and an optional metadata-only result, with no chained raw exception. Custom providers must follow this contract and must not attach prompts, credentials, raw errors or response bodies. `AiTextGenerated` remains a delivery event with text in memory; it is not a durable usage recorder. Its model is now the returned model, possibly `null`, rather than a guessed configuration value.
+
+The plugin exposes `generation()->run($systemPrompt, $userInput, $deliver, $restore, $field, $operationId = null, $actionName = null)` for server-side integrations. It checks current-panel admission and owns execution/persistence. `$deliver` receives `GenerateResult`; `$restore` must restore the captured original scalar/array value if delivery or final storage fails. `AiWriterAction` supplies both callbacks and field conversion automatically. Keep delivery callbacks limited to reversible local field mutation; external side effects cannot be rolled back by this service. Call generation outside any database transaction on the usage connection: admission must be committed before HTTP, and an existing transaction is rejected before contacting the provider.
+
+**Configuration and retry changes:** Anthropic and OpenRouter require an explicit nonblank model. OpenAI and Gemini use their documented package defaults when `AI_WRITER_MODEL` is absent or blank. Invalid nonblank models/provider names, keys or nonpositive timeout/token settings fail before HTTP. Anthropic uses `x-api-key` and Gemini uses `x-goog-api-key`, never a key in the URL. Each built-in adapter makes at most one POST and does not follow redirects or retry automatically, including timeouts, quota/authentication failures and 5xx responses. The former OpenRouter retry settings were removed. A new user submission is a new operation and may incur another provider charge; an ambiguous timeout is not proof of zero usage or cost.
+
+OpenRouter's `usage.cost` is normalized directly from its JSON numeric lexeme to a canonical USD string with twelve fractional digits and half-up rounding. It is not converted through a binary float or replaced by upstream/BYOK cost details. A reported zero is known zero; missing/invalid cost is unavailable. Costs represent OpenRouter account charges, not necessarily the complete external BYOK bill. For other responses, cost remains unavailable unless the host configures a complete matching tariff as described below. No price, balance or tokenizer requests are added.
+
+Endpoint references: [OpenAI Chat](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create), [Anthropic Messages](https://platform.claude.com/docs/en/api/messages/create), [Gemini generateContent](https://ai.google.dev/api/generate-content), [OpenRouter usage](https://openrouter.ai/docs/cookbook/administration/usage-accounting).
+
+## Usage ledger and host tariffs
+
+Each admitted operation inserts a committed `pending` attempt before contacting a provider. The current panel, its guard's actor class and opaque string identifier, target field, action name and UTC start time are captured on the server. The first response freezes allowlisted metadata as `received`; successful local delivery finishes as `delivered`. Rejection, timeout, invalid output or delivery failure finishes as `failed` when storage is available. Provider HTTP duration and local processing overhead are recorded separately in milliseconds. No historical aggregate or remote balance/price/tokenizer lookup runs during generation.
+
+The ledger stores only identity/context and normalized measurements: no prompts, generated text, internal thoughts, credentials, raw response/error bodies or chained exceptions. A failure may have known tokens or cost even though no text was delivered. Missing measurements remain `null`; a known zero stays zero. Unknown-outcome timeouts are never treated as free. If storage fails before admission, HTTP is blocked. If storage fails after HTTP, the form is preserved/restored and no delivery success is emitted; an unresolved `pending` or `received` row may remain. It does not prove zero usage, and the plugin does not automatically retry or infer remote billing after a process crash.
+
+The unique operation UUID plus attempt number prevents repeated local processing from making a second HTTP call for that operation. Finalization is idempotent and bound to the captured identity/context. A host integration may retain and resupply its **server-owned** operation UUID; a duplicate is safely rejected, not replayed, because generated text is never stored. Ordinary new action submissions create new operation UUIDs and may incur another charge. This does not deduplicate independent clicks or claim remote idempotency. Only attempt 1 is currently used.
+
+Costs and tariff snapshots use canonical USD **TEXT** with twelve fractional digits, avoiding SQLite numeric-affinity rounding. To estimate a cost when none was reported, configure explicit string rates per million inclusive input/output tokens, keyed by the exact returned provider/model:
+
+```php
+// config/filament-ai-writer.php — example host tariff, not a current price quote
+'pricing' => [
+    'openai' => [
+        'my-returned-model' => [
+            'input_usd_per_million' => '2',
+            'output_usd_per_million' => '10',
+        ],
+    ],
+],
+```
+
+Both token totals, both valid string rates and the returned model must be known. Literal model identifiers containing `/` or `.` are supported. Requested aliases do not substitute for returned models. Provider-reported cost, including zero, takes precedence. Estimation multiplies inclusive totals once, rounds half-up only after summing both components, and records `estimated` plus the applied rate snapshot. Cache/reasoning details are not billed again. Missing, numeric/float, negative, overly precise or unmatched rates leave cost unavailable. Rates represent a host estimate of inclusive usage, not a promise to reproduce cache tier, reasoning tier or external BYOK billing. Historical estimates do not change when the configuration changes.
+
+No cleanup or deletion runs automatically. Use the plugin statistics service for authorized reporting; reading `UsageAttempt` directly remains a host server-side responsibility, not an authorized statistics API.
+
+## Current-panel statistics
+
+The plugin registers **AI Writer usage** at `/your-panel/ai-writer-usage`. Login alone does not grant access: configure `authorizeViewStatistics()` with the host's permission/policy callback. It is independent of AI use and administration permission, and uses the current panel's guard. Permission is checked for page access, every subsequent Livewire request, and each statistics query/aggregate/filter-option read. A mounted page rejects a changed panel context or revoked permission.
+
+The panel is fixed context, never a selectable cross-panel filter. An authorized viewer can inspect **all actors' metadata within the current panel**, not just their own calls. No cross-panel expansion/global view is exposed. Actor filters identify both actor class and opaque identifier, without joining a host User table or assuming names/roles/ID types.
+
+History is read-only and paginated (10/25/50 rows; values are also bounded server-side). One screen shows Requests, Tokens consumed, Costs and Average duration (the `UsageOverviewStats` widget) above one requests histogram (`UsageCountChart`) and a compact request table, with native table filters for period, user and result. Both widgets can also be placed on your dashboard, where they show the last seven days. The shared selection defaults to the last seven calendar days, with Today/7 days/30 days/custom dates. Success means delivered, failure means failed, and in progress includes pending and received. Period boundaries use the application's timezone and convert to UTC; the end date includes the entire local calendar day. Actor options are panel-scoped and bounded. Provider/model switching and comparisons are not part of the screen.
+
+Rows open a right detail drawer with historical actual model/provider, exact recorded consumption/cost source, safe IDs and sanitized outcomes. Every drawer lookup rechecks current permission, guard and panel scope. Metrics, histogram and table share the same selection. Unknown measurements remain unavailable, known zero stays measured, estimated costs are labeled and incomplete known-cost subtotals show partial coverage; exact canonical values remain available in details. Token and duration summaries use available measurements and identify coverage.
+
+Aggregation reads chunks of 500 records and sums decimal/integer strings in PHP, without SQL monetary conversion, float rounding or per-attempt subtotal overflow. History uses panel/date/actor/provider/model indexes; report runtime still grows with matching retained history. No statistics aggregate runs during AI generation, and no provider price/balance/tokenizer call is added. A custom server-side integration may use `AiWriterPlugin::get()->statistics()->query()` and `summary($filteredQuery)`; summary freshly checks permission and constrains its outer query to the current panel even if given a broader query. These builders are server-side objects, not client-controlled panel selectors.
+
+Filament references: [custom pages](https://filamentphp.com/docs/5.x/navigation/custom-pages), [tables](https://filamentphp.com/docs/5.x/tables/overview).
+
+## Opt-in usage retention
+
+Nothing is deleted or scheduled by default. `retention.days` defaults to `null`; invoking cleanup without configuration or an explicit `--days` safely reports disabled. To opt in, set `AI_WRITER_RETENTION_DAYS=90` (or `retention.days` in the published config), inspect the dry run, then execute explicitly:
+
+```bash
+php artisan ai-writer:prune-usage --days=90 --dry-run
+php artisan ai-writer:prune-usage --days=90
+```
+
+Days must be a positive integer. `retention.batch_size` defaults to 500 and must be 1–1000. No package scheduler is registered. A host may schedule this command deliberately after reviewing its own retention needs and CLI/operator access. The maintenance command spans the configured usage table across panels; it does not grant cross-panel statistics access to a panel viewer.
+
+Only terminal `delivered`/`failed` attempts with a completion timestamp are eligible. Both operation start and completion must be **strictly before** the effective cutoff: the earlier of now minus the configured days and the start of the current app-local calendar month, converted to UTC. This protects unresolved `pending`/`received` rows and any row started or completed during the current app-calendar month, even with a very short retention setting. Credit balances, reservations and permanent operation identities are stored separately and are never deleted by this command. Unresolved rows are never presumed free or completed by cleanup.
+
+Deletion selects bounded ID batches, freezes an upper ID for the run, and rechecks eligibility in each atomic DELETE. New/backdated inserts wait for a later explicit run. There is no whole-history transaction. Dry-run counts are observations at that read, not a concurrent snapshot guarantee. Successful output reports actual deleted rows and processed batches; on an error, the command returns failure and reports the already deleted count without raw database details. Earlier completed batches remain deleted. Repeating the command does not double-count prior deletion.
+
+Deleted rows disappear from subsequent history queries, known subtotals and measurement coverage. This metadata cleanup cannot recover stored text (none is kept), prove remote billing, retry inference or alter provider accounts. Keep external backups/audit records according to the host's policy before opting in.
 
 ## Package structure
 
@@ -390,29 +600,54 @@ public function register(): void
 
 ## Local development
 
-To use this package in a local project, add a path repository to your project's `composer.json`:
-
-```json
-{
-    "repositories": [
-        {
-            "type": "path",
-            "url": "../filament-ai-writer"
-        }
-    ],
-    "require": {
-        "pdro-lucas/filament-ai-writer": "@dev"
-    }
-}
-```
-
-Then run:
+The isolated Orchestra Testbench/Workbench demo uses Laravel 12, PHPUnit 11 and its own SQLite file. No host Laravel app, API key, Node build or paid API call is needed.
 
 ```bash
-composer require pdro-lucas/filament-ai-writer @dev
+composer install
+composer workbench:build
+composer serve
 ```
 
-Composer will symlink the local package directory, so any changes you make to the package are reflected immediately in the project.
+Open `http://127.0.0.1:8000/demo` and sign in with `demo@example.test` / `password`. Enter a topic and click **Generate demo text** next to **Generated text** for silent generation. For interactive generation, click **Open writing prompt** next to **Interactive text**, enter a request of at least 10 characters and click **Generate**. Both modes fill their respective fields with a fixed local response. The demo always overrides the provider and key with fake values and blocks unexpected Laravel HTTP requests. The demo explicitly grants its authenticated viewer statistics permission. Follow **View this panel's usage history** or open `/demo/ai-writer-usage` after generation. Normal generation records tokens with unavailable cost. Include `[demo:estimated]` in the topic (silent) or modal request (interactive) to use an example host tariff; `[demo:failure]` returns a safe HTTP503 failure and `[demo:truncated]` returns incomplete output. Both failure scenarios preserve the original field and appear as failed attempts; no paid API is contacted. The demo tariff is an example, not a live price quote. Its public demo app key and credentials are for local use only; `serve` binds to loopback.
+
+`workbench:build` migrates `workbench/database/database.sqlite`, seeds the demo user and publishes Filament assets. It is safe to repeat and does not reset the demo database. The package ServiceProvider never loads the demo providers in a consuming application.
+
+```bash
+composer test
+```
+
+Tests bootstrap with `WithWorkbench`, use a separate SQLite `:memory:` connection by default, and block unexpected HTTP calls. Tests must install their own `Http::fake()` responses; the demo response is not installed during unit tests. `tests/TestCase.php` is the shared base for subsequent coverage.
+
+### Running the suite on MySQL or PostgreSQL
+
+The whole suite also passes on MySQL 8.4 and PostgreSQL 16. Select the database with `AI_WRITER_TEST_DB_CONNECTION` (`mysql` or `pgsql`) and `AI_WRITER_TEST_DB_HOST`, `AI_WRITER_TEST_DB_PORT`, `AI_WRITER_TEST_DB_DATABASE`, `AI_WRITER_TEST_DB_USERNAME`, `AI_WRITER_TEST_DB_PASSWORD`. **The database is wiped by `migrate:fresh`: use a dedicated, empty one.** With Docker:
+
+```bash
+docker network create ai-writer-test
+docker run -d --name ai-writer-mysql --network ai-writer-test -e MYSQL_ROOT_PASSWORD=secret -e MYSQL_DATABASE=suite mysql:8.4
+docker run -d --name ai-writer-pg --network ai-writer-test -e POSTGRES_PASSWORD=secret -e POSTGRES_DB=suite postgres:16
+# Use any PHP 8.2+ image with pdo_mysql/pdo_pgsql, intl and zip; the repo is mounted at /app after `composer install`.
+docker run --rm --network ai-writer-test -v "$PWD":/app -w /app \
+  -e AI_WRITER_TEST_DB_CONNECTION=mysql -e AI_WRITER_TEST_DB_HOST=ai-writer-mysql -e AI_WRITER_TEST_DB_DATABASE=suite -e AI_WRITER_TEST_DB_USERNAME=root -e AI_WRITER_TEST_DB_PASSWORD=secret \
+  your-php-image vendor/bin/phpunit
+# PostgreSQL: -e AI_WRITER_TEST_DB_CONNECTION=pgsql -e AI_WRITER_TEST_DB_HOST=ai-writer-pg -e AI_WRITER_TEST_DB_DATABASE=suite -e AI_WRITER_TEST_DB_USERNAME=postgres -e AI_WRITER_TEST_DB_PASSWORD=secret
+docker rm -f -v ai-writer-mysql ai-writer-pg && docker network rm ai-writer-test
+```
+
+On a real database the suite also runs `tests/Concurrency/MultiProcessAdmissionTest`, which races separate PHP processes through admission (last credit, frequency and concurrency limits) behind a file barrier. It is skipped on SQLite, where row-lock deadlocks and double admission cannot be reproduced, so run it on MySQL after touching the admission locking in `Credits`, `Controls` or `Abuse`.
+
+To check the other supported major without changing the manifest:
+
+```bash
+composer update 'filament/*' livewire/livewire --with='filament/filament:^4.15.3' --with='livewire/livewire:^3.0' -W
+composer workbench:build
+composer test
+# Restore the default latest compatible major:
+composer update 'filament/*' livewire/livewire -W
+composer workbench:build
+```
+
+Stop the local server before switching dependency versions. Composer's lock file remains ignored according to the existing library convention.
 
 ## Contributing
 
