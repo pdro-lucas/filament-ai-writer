@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.0.1](https://github.com/pdro-lucas/filament-ai-writer/compare/v1.0.0...v1.0.1) (2026-11-05)
+
+
+### Bug Fixes
+
+* **widgets:** avoid trait property conflict on PHP 8.2 to 8.4 ([#34](https://github.com/pdro-lucas/filament-ai-writer/issues/34)) ([e803d02](https://github.com/pdro-lucas/filament-ai-writer/commit/e803d02680f416486fe3d2247464198cc9e9071c))
+
+
+### Miscellaneous
+
+* **release:** stop pinning the release version ([#31](https://github.com/pdro-lucas/filament-ai-writer/issues/31)) ([bf684bc](https://github.com/pdro-lucas/filament-ai-writer/commit/bf684bc7f23203db8752f066f408df7be021076f))
+
 ## [1.0.0](https://github.com/pdro-lucas/filament-ai-writer/compare/v0.7.1...v1.0.0) (2026-11-05)
 
 
