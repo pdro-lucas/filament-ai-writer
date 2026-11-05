@@ -5,7 +5,10 @@
 
 ### ⚠ BREAKING CHANGES
 
-* Register AiWriterPlugin in every Filament panel using the action. PHP 8.2 and Laravel 11.28 or 12 are now required.
+* PHP 8.2+, Laravel 11.28 or 12 and Filament 4.15.3+ (or 5) are now required.
+* Custom providers must return `GenerateResult` instead of a string.
+* Anthropic no longer has a default model: set `AI_WRITER_MODEL`. Automatic OpenRouter retries were removed.
+* Registering the plugin, running migrations, usage tracking and controls are all opt-in; the action alone behaves like 0.7.1. See [docs/upgrade.md](docs/upgrade.md).
 
 ### Features
 
