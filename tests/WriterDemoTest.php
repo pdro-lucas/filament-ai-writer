@@ -9,6 +9,7 @@ use Filament\Notifications\Notification;
 use PdroLucas\FilamentAiWriter\Actions\AiWriterAction;
 use PdroLucas\FilamentAiWriter\AiWriterPlugin;
 use PdroLucas\FilamentAiWriter\Tests\Fixtures\ArrayWriterPage;
+use PdroLucas\FilamentAiWriter\Tests\Fixtures\RichWriterPage;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Orchestra\Testbench\Attributes\DefineEnvironment;
 use Illuminate\Foundation\Testing\DatabaseMigrations;
@@ -19,6 +20,7 @@ use Illuminate\Support\Facades\Exceptions;
 use PdroLucas\FilamentAiWriter\Events\AiTextGenerated;
 use PdroLucas\FilamentAiWriter\Contracts\AiProvider;
 use PdroLucas\FilamentAiWriter\Data\GenerateResult;
+use Filament\Forms\Components\RichEditor\RichContentRenderer;
 use Livewire\Livewire;
 use Workbench\App\Models\User;
 use Workbench\App\Pages\WriterDemo;
@@ -223,6 +225,30 @@ class WriterDemoTest extends TestCase
     );
 
     Http::assertNothingSent();
+  }
+
+  #[DataProvider('richEditorOutputs')]
+  public function test_rich_editor_receives_plain_text_as_escaped_paragraphs_and_markup_unchanged(string $text, string $expected): void
+  {
+    $this->signIn();
+    Http::fake([
+      'https://api.openai.com/v1/chat/completions' => Http::response([
+        'choices' => [['message' => ['content' => $text], 'finish_reason' => 'stop']],
+      ]),
+    ]);
+
+    $page = Livewire::test(RichWriterPage::class)
+      ->callAction(TestAction::make('ai_writer')->schemaComponent('body', 'form'));
+
+    $this->assertSame($expected, RichContentRenderer::make($page->get('data.body'))->toHtml());
+  }
+
+  public static function richEditorOutputs(): array
+  {
+    return [
+      'plain text' => ["First line\nsame paragraph & more.\r\n\r\n\nSecond <paragraph.", '<p>First line<br />same paragraph &amp; more.</p><p>Second &lt;paragraph.</p>'],
+      'markup' => ['<p>Already <strong>rich</strong></p>', '<p>Already <strong>rich</strong></p>'],
+    ];
   }
 
   #[DataProvider('arrayModes')]

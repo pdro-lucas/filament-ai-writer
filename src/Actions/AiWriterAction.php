@@ -3,6 +3,8 @@ namespace PdroLucas\FilamentAiWriter\Actions;
 
 use Filament\Actions\Action;
 use Filament\Facades\Filament;
+use Filament\Forms\Components\Field;
+use Filament\Forms\Components\RichEditor;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\Toggle;
@@ -309,6 +311,8 @@ class AiWriterAction extends Action
         $value = $this->filterAllowedValues($this->parseArrayResult($result->text));
       } elseif ($this->expectArray) {
         $value = $this->parseArrayResult($result->text, $this->normalizeArrayCase);
+      } elseif ($this->targetsRichEditor()) {
+        $value = $this->plainTextToHtml($value);
       }
       if ($value === '' || $value === []) {
         throw new GenerationFailure('invalid_output', result: $result->withoutText());
@@ -318,6 +322,31 @@ class AiWriterAction extends Action
     $this->getLivewire()?->dispatch('ai-writer-credits-changed');
     $this->dispatchEvent($this->targetField, $result);
     $this->notifyGenerationSuccess();
+  }
+
+  protected function targetsRichEditor(): bool
+  {
+    $component = $this->getSchemaComponent();
+    $target = $component instanceof Field && $component->getName() === $this->targetField
+      ? $component
+      : $component?->getContainer()->getComponent(fn ($candidate): bool => $candidate instanceof Field && $candidate->getName() === $this->targetField, withActions: false);
+
+    return $target instanceof RichEditor;
+  }
+
+  /** Models answer in plain text; a rich editor would collapse its line breaks into one paragraph. Markup is kept as given. */
+  protected function plainTextToHtml(string $text): string
+  {
+    if (preg_match('/<\/?[a-z][a-z0-9]*(\s[^<>]*)?\/?>/i', $text)) {
+      return $text;
+    }
+
+    $paragraphs = preg_split('/\R\s*\R/u', str_replace("\r\n", "\n", $text)) ?: [$text];
+
+    return implode('', array_map(
+      fn (string $paragraph): string => '<p>' . implode('<br>', array_map('e', preg_split('/\R/u', trim($paragraph)))) . '</p>',
+      array_filter($paragraphs, fn (string $paragraph): bool => trim($paragraph) !== ''),
+    ));
   }
 
   protected function runSilent(Get $get, Set $set): void
