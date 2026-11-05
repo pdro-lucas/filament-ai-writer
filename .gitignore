@@ -3,3 +3,4 @@
 /.phpunit.*
 /composer.lock
 /.idea/
+/docs/specs/
