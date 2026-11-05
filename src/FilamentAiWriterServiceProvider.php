@@ -16,6 +16,9 @@ class FilamentAiWriterServiceProvider extends ServiceProvider
   {
     $this->mergeConfigFrom(__DIR__ . "/../config/filament-ai-writer.php", "filament-ai-writer");
 
+    // One instance per request (and Octane-safe): its actor-label memo spares the host directory repeated lookups.
+    $this->app->scoped(\PdroLucas\FilamentAiWriter\Usage\UsageStatistics::class);
+
     $this->app->bind(AiProvider::class, function () {
       return match (config("filament-ai-writer.provider")) {
         "openai" => new OpenAiProvider(),

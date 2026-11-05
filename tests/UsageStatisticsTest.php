@@ -87,13 +87,14 @@ class UsageStatisticsTest extends TestCase
       ->assertCanSeeTableRecords($records->clone()->whereKey($first)->get())
       ->assertCanNotSeeTableRecords($records->clone()->whereKey($second)->get());
     $this->assertSame(1, AiWriterPlugin::get()->statistics()->summary($page->instance()->getFilteredTableQuery())['attempts']);
-    $dashboard = AiWriterPlugin::get()->statistics()->dashboard($page->viewData('filters'));
+    $dashboard = AiWriterPlugin::get()->statistics()->dashboard($page->viewData('usageFilters'));
     $this->assertSame(1, $dashboard['attempts']);
     $this->assertSame('0.100000000001', $dashboard['provider_cost']);
     $this->assertSame([['label' => 'openai', 'delivered' => 1, 'failed' => 0, 'active' => 0]], $dashboard['charts']['providers']);
-    $page->filterTable('actor', UsageStatistics::actorKey('HostActor', 'PRIVATE-actor'))->assertCountTableRecords(0);
-    $page->filterTable('status', null)
-      ->filterTable('actor', UsageStatistics::actorKey('HostActor', 'another-actor'))
+    // Another panel's actor is not an option, so the header filter refuses it instead of applying it.
+    $page->callAction('filter', ['actor' => UsageStatistics::actorKey('HostActor', 'PRIVATE-actor')])->assertHasActionErrors(['actor'])->assertCountTableRecords(1);
+    $page->unmountAction()->filterTable('status', null)
+      ->callAction('filter', ['actor' => UsageStatistics::actorKey('HostActor', 'another-actor')])
       ->assertCountTableRecords(1)
       ->assertCanSeeTableRecords($records->clone()->whereKey($first)->get());
   }
@@ -108,25 +109,113 @@ class UsageStatisticsTest extends TestCase
     $this->row('demo', ['actor_type' => 'DifferentActor', 'status' => 'pending']);
     $this->row('demo', ['status' => 'failed']);
     $page = \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\UsageStatisticsPage::class)->assertCountTableRecords(4);
-    $this->assertSame(['from' => '2026-10-15', 'until' => '2026-10-21'], $page->instance()->getTableFilterState('period'));
+    $this->assertSame(['from' => '2026-10-15', 'until' => '2026-10-21'], $page->instance()->periodFilter());
     $page->filterTable('status', 'active')
-      ->filterTable('actor', UsageStatistics::actorKey('HostActor', 'opaque-id'))->assertCountTableRecords(2);
+      ->callAction('filter', ['actor' => UsageStatistics::actorKey('HostActor', 'opaque-id')])->assertCountTableRecords(2);
     $service = AiWriterPlugin::get()->statistics();
-    $summary = $service->dashboard($page->viewData('filters'));
+    $summary = $service->dashboard($page->viewData('usageFilters'));
     $this->assertSame(2, $summary['attempts']);
     $this->assertSame(2, array_sum(array_column($summary['charts']['time'], 'active')));
     $page->call('setPeriod', 1)->assertCountTableRecords(1);
-    $this->assertSame(1, $service->dashboard($page->viewData('filters'))['attempts']);
+    $this->assertSame(1, $service->dashboard($page->viewData('usageFilters'))['attempts']);
     $page->call('setPeriod', 30)->assertCountTableRecords(2);
+    // The header reflects the new state in the same response as the action, not on the next request.
+    // (The first match is the menu button; the menu items repeat the preset names after it.)
+    $periodLabel = function ($page): string {
+      preg_match('/Today|Last \d+ days|[A-Z][a-z]{2} \d+, \d{4} – [A-Z][a-z]{2} \d+, \d{4}/', $page->html(), $match);
+
+      return $match[0];
+    };
+    $this->assertSame('Today', $periodLabel($page->callAction('period1')));
+    $this->assertSame('Last 30 days', $periodLabel($page->unmountAction()->callAction('period30')->assertCountTableRecords(2)));
     // Match the JavaScript picker's internal state, not just preset date-only input.
-    $page->filterTable('period', ['from' => '2026-10-15 00:00:00', 'until' => '2026-10-15 00:00:00'])->assertCountTableRecords(1);
-    $this->assertSame(1, $service->dashboard($page->viewData('filters'))['attempts']);
+    $page->set('filters', ['from' => '2026-10-15 00:00:00', 'until' => '2026-10-15 00:00:00'])->assertCountTableRecords(1);
+    $this->assertSame(1, $service->dashboard($page->viewData('usageFilters'))['attempts']);
+    $page->callAction('periodCustom', ['from' => '2026-10-21', 'until' => '2026-10-15'])->assertHasActionErrors(['until']);
+    $page->unmountAction()->callAction('periodCustom', ['from' => '2026-10-15', 'until' => '2026-10-15'])->assertHasNoActionErrors()->assertCountTableRecords(1);
+    $this->assertSame('Oct 15, 2026 – Oct 15, 2026', $periodLabel($page));
     $page->call('resetUsageFilters')->assertCountTableRecords(4);
     $page->set('tableFilters.provider.value', 'PRIVATE-provider')
       ->set('tableFilters.model.value', 'PRIVATE-model')->assertCountTableRecords(4)
-      ->assertViewHas('filters', fn (array $filters): bool => AiWriterPlugin::get()->statistics()->dashboard($filters)['attempts'] === 4);
-    $page->assertViewHas('filters', fn (array $filters): bool => !isset($filters['provider'], $filters['model']));
-    $this->assertSame(['from' => '2026-10-15', 'until' => '2026-10-21'], $page->instance()->getTableFilterState('period'));
+      ->assertViewHas('usageFilters', fn (array $filters): bool => AiWriterPlugin::get()->statistics()->dashboard($filters)['attempts'] === 4);
+    $page->assertViewHas('usageFilters', fn (array $filters): bool => !isset($filters['provider'], $filters['model']));
+    $this->assertSame(['from' => '2026-10-15', 'until' => '2026-10-21'], $page->instance()->periodFilter());
+  }
+
+  public function test_previous_period_has_the_same_length_and_changes_handle_missing_or_zero_bases(): void
+  {
+    $service = app(UsageStatistics::class);
+    $this->assertSame(['from' => '2026-10-08', 'until' => '2026-10-14'], $service->previousPeriod(['from' => '2026-10-15', 'until' => '2026-10-21']));
+    $this->assertSame(['from' => '2026-10-20', 'until' => '2026-10-20'], $service->previousPeriod(['from' => '2026-10-21', 'until' => '2026-10-21']));
+    $this->assertSame(['from' => '2026-02-26', 'until' => '2026-02-28'], $service->previousPeriod(['from' => '2026-03-01', 'until' => '2026-03-03']));
+    foreach ([[], ['from' => '2026-10-15'], ['until' => '2026-10-21'], ['from' => '2026-10-21', 'until' => '2026-10-15'], ['from' => '2026-02-31', 'until' => '2026-03-03'], ['from' => 'x', 'until' => 'y']] as $open) {
+      $this->assertNull($service->previousPeriod($open));
+    }
+    $this->assertEqualsWithDelta(36.5, UsageStatistics::change(1365, 1000), 0.001);
+    $this->assertEqualsWithDelta(-50.0, UsageStatistics::change(5, 10), 0.001);
+    $this->assertSame(0.0, UsageStatistics::change(0, 0));
+    $this->assertNull(UsageStatistics::change(5, 0));
+    $this->assertNull(UsageStatistics::change(5, null));
+    $this->assertNull(UsageStatistics::change(null, 5));
+  }
+
+  public function test_overview_compares_against_the_previous_period_and_says_so_when_there_is_none(): void
+  {
+    $this->login();
+    $this->row('demo', ['started_at' => '2026-10-20 12:00:00']);
+    $this->row('demo', ['started_at' => '2026-10-21 12:00:00']);
+    $this->row('demo', ['started_at' => '2026-10-21 13:00:00']);
+    $this->row('demo', ['started_at' => '2026-10-10 12:00:00']);
+    $this->row('private-panel', ['started_at' => '2026-10-10 12:00:00']);
+    $week = ['period' => ['from' => '2026-10-15', 'until' => '2026-10-21']];
+    // 3 requests against 1 in the seven days before (other panels never count): +200%.
+    \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Widgets\UsageOverviewStats::class, ['panelId' => 'demo', 'sharedFilters' => $week])
+      ->assertSee('200.0% vs. previous period');
+    \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Widgets\UsageOverviewStats::class, ['panelId' => 'demo', 'sharedFilters' => ['period' => ['until' => '2026-10-21']]])
+      ->assertSee('No data from the previous period')->assertDontSee('vs. previous period');
+  }
+
+  public function test_rankings_explore_and_neighbours_stay_inside_the_panel_and_current_filters(): void
+  {
+    $this->login();
+    $first = $this->row('demo', ['actor_id' => 'ana', 'field' => 'title', 'started_at' => '2026-10-21 10:00:00']);
+    $second = $this->row('demo', ['actor_id' => 'ana', 'field' => 'body', 'started_at' => '2026-10-21 11:00:00']);
+    $third = $this->row('demo', ['actor_id' => 'bia', 'field' => 'body', 'started_at' => '2026-10-21 12:00:00']);
+    $old = $this->row('demo', ['actor_id' => 'bia', 'field' => 'old-field', 'started_at' => '2026-09-01 12:00:00']);
+    $private = $this->row('private-panel', ['actor_id' => 'PRIVATE-actor', 'field' => 'PRIVATE-field', 'started_at' => '2026-10-21 12:00:00']);
+    $service = app(UsageStatistics::class);
+    $week = ['period' => ['from' => '2026-10-15', 'until' => '2026-10-21']];
+
+    $this->assertSame([2, 1], array_column($service->top($week, 'actor'), 'requests'));
+    $this->assertSame(['body' => 2, 'title' => 1], array_column($service->top($week, 'field'), 'requests', 'field'));
+    $this->assertStringNotContainsString('PRIVATE', json_encode([$service->top([], 'actor'), $service->top([], 'field')]));
+
+    $page = \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\UsageStatisticsPage::class)
+      ->assertCountTableRecords(3)
+      ->call('explore', 'actor', UsageStatistics::actorKey('HostActor', 'ana'))->assertCountTableRecords(2)
+      ->call('explore', 'field', 'title')->assertCountTableRecords(1)
+      ->call('explore', 'field', 'PRIVATE-field')->assertCountTableRecords(0);
+    // The header field filter is panel-scoped like the user one, and a visible clear action undoes both but keeps the period.
+    $page->call('explore', 'field', 'title')->assertActionVisible('clearFilters')->assertSee('Field: title');
+    $epochWhileFiltered = $page->get('widgetEpoch');
+    $page->callAction('filter', ['field' => 'PRIVATE-field'])->assertHasActionErrors(['field'])->assertCountTableRecords(1);
+    $page->unmountAction()->callAction('clearFilters')->assertActionHidden('clearFilters')->assertCountTableRecords(3);
+    // The embedded widgets follow the cleared state too: a widget key seen before must not bring back its stale filters.
+    $page->assertDontSee('Field: title');
+    // Regression: the cleared filters equal the initial ones, but the widgets still get a key never used before
+    // (a repeated key made Livewire keep the stale, still-filtered children in the browser).
+    $this->assertGreaterThan($epochWhileFiltered, $page->get('widgetEpoch'));
+    $this->assertSame(['from' => '2026-10-15', 'until' => '2026-10-21'], $page->instance()->periodFilter());
+    // A tampered, non-text user filter selects nothing instead of crashing.
+    $page->set('filters', ['actor' => ['x']])->assertOk()->assertCountTableRecords(0);
+    $page->call('explore', 'provider', 'openai')->assertStatus(422);
+
+    // Neighbours come from the filtered, panel-scoped table: the old and private rows are never offered.
+    $page = \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\UsageStatisticsPage::class);
+    $page->callAction([\Filament\Actions\Testing\TestAction::make('details')->table($second), 'previous'])->assertSet('mountedActions.0.context.recordKey', (string) $third);
+    \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\UsageStatisticsPage::class)->assertActionDisabled([\Filament\Actions\Testing\TestAction::make('details')->table($third), 'previous']);
+    $this->assertGreaterThan($third, $old);
+    $this->assertGreaterThan($old, $private);
   }
 
   public function test_period_picker_state_with_a_time_of_day_renders_and_filters_by_date(): void
@@ -138,11 +227,11 @@ class UsageStatisticsTest extends TestCase
     $this->row('demo', ['started_at' => '2026-10-16 00:00:00']);
     // Filament 5.6 keeps the current time on the date-only pickers' default state (#25).
     \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\UsageStatisticsPage::class)
-      ->set('tableFilters.period', ['from' => '2026-10-15 09:09:37', 'until' => '2026-10-15 09:09:37'])
+      ->set('filters', ['from' => '2026-10-15 09:09:37', 'until' => '2026-10-15 09:09:37'])
       ->assertOk()->assertSee('AI Writer usage')
       ->assertCountTableRecords(2)
-      ->assertViewHas('filters', fn (array $filters): bool => $filters['period'] === ['from' => '2026-10-15', 'until' => '2026-10-15'])
-      ->assertViewHas('filters', fn (array $filters): bool => AiWriterPlugin::get()->statistics()->dashboard($filters)['attempts'] === 2);
+      ->assertViewHas('usageFilters', fn (array $filters): bool => $filters['period'] === ['from' => '2026-10-15', 'until' => '2026-10-15'])
+      ->assertViewHas('usageFilters', fn (array $filters): bool => AiWriterPlugin::get()->statistics()->dashboard($filters)['attempts'] === 2);
   }
 
   public function test_page_period_boundary_rejects_malformed_picker_state(): void
@@ -150,7 +239,7 @@ class UsageStatisticsTest extends TestCase
     $this->login();
     $page = \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\UsageStatisticsPage::class)->instance();
     foreach (['2026-02-31', '2026-02-31 00:00:00', '2026-02-31 09:09:37', '2026-10-15 24:00:00', 'tomorrow', 'garbage', '2026-10-15T00:00:00Z', ['2026-10-15']] as $invalid) {
-      $page->tableFilters['period'] = ['from' => $invalid, 'until' => '2026-10-21'];
+      $page->filters = ['from' => $invalid, 'until' => '2026-10-21'];
       try {
         $page->getFilteredTableQuery()->count();
         $this->fail('Malformed date state must reach strict period validation.');
@@ -176,14 +265,25 @@ class UsageStatisticsTest extends TestCase
     $page = \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Pages\UsageStatisticsPage::class)
       ->assertSee('21/10/2026 09:00')->assertSee('20/10/2026 22:00')->assertSee('Custo · BRL')->assertDontSee('USD');
     $page->call('setPeriod', 1)->assertCountTableRecords(1);
-    $this->assertSame(['from' => '2026-10-21', 'until' => '2026-10-21'], $page->instance()->getTableFilterState('period'));
-    $this->assertSame(1, AiWriterPlugin::get()->statistics()->dashboard($page->viewData('filters'))['attempts']);
+    $this->assertSame(['from' => '2026-10-21', 'until' => '2026-10-21'], $page->instance()->periodFilter());
+    $this->assertSame(1, AiWriterPlugin::get()->statistics()->dashboard($page->viewData('usageFilters'))['attempts']);
     $page->call('setPeriod', 7);
-    $buckets = AiWriterPlugin::get()->statistics()->dashboard($page->viewData('filters'))['charts']['time'];
+    $buckets = AiWriterPlugin::get()->statistics()->dashboard($page->viewData('usageFilters'))['charts']['time'];
     $this->assertSame(['2026-10-20', '2026-10-21'], array_column($buckets, 'label'));
     // The request drawer writes its date as text, with the same host format and timezone.
-    $started = collect(\PdroLucas\FilamentAiWriter\Schemas\UsageAttemptDetails::components(\PdroLucas\FilamentAiWriter\Models\UsageAttempt::query()->findOrFail($id)))
-      ->flatMap(fn ($section) => $section->getDefaultChildComponents())->first(fn ($entry) => $entry->getName() === 'started');
+    $find = function (array $components) use (&$find): ?\Filament\Infolists\Components\TextEntry {
+      foreach ($components as $component) {
+        if ($component instanceof \Filament\Infolists\Components\TextEntry && $component->getName() === 'when') {
+          return $component;
+        }
+        if (($found = $find($component->getDefaultChildComponents())) !== null) {
+          return $found;
+        }
+      }
+
+      return null;
+    };
+    $started = $find(\PdroLucas\FilamentAiWriter\Schemas\UsageAttemptDetails::components(\PdroLucas\FilamentAiWriter\Models\UsageAttempt::query()->findOrFail($id)));
     $this->assertSame('21/10/2026 09:00 · America/Sao_Paulo', $started->getState());
     \Livewire\Livewire::test(\PdroLucas\FilamentAiWriter\Widgets\UsageOverviewStats::class)
       ->assertSee('Visão geral do uso')->assertSee('R$ 0.100000000001')->assertSee('Solicitações')->assertSee('Custos · BRL')

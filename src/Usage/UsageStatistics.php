@@ -9,6 +9,7 @@ use Filament\Models\Contracts\FilamentUser;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Validation\ValidationException;
 use PdroLucas\FilamentAiWriter\AiWriterPlugin;
+use PdroLucas\FilamentAiWriter\Controls\ActorIdentity;
 use PdroLucas\FilamentAiWriter\Models\UsageAttempt;
 use PdroLucas\FilamentAiWriter\Support\Decimal;
 
@@ -44,6 +45,7 @@ class UsageStatistics
     foreach ($query->select(['id', 'status', 'cost_usd', 'cost_source', ...($includeCharts ? ['started_at', 'provider'] : []), ...$measurements])->toBase()->lazyById(500) as $row) {
       if ($includeCharts) {
         $this->countChartRow($charts, $row);
+        $this->countDailyMetrics($charts, $row);
       }
       $summary['attempts']++;
       if ($row->status === 'delivered') {
@@ -80,7 +82,7 @@ class UsageStatistics
   public function filteredQuery(array $filters): Builder
   {
     $query = $this->filterPeriod($this->query(), $filters['period'] ?? []);
-    foreach (['provider', 'model'] as $column) {
+    foreach (['provider', 'model', 'field'] as $column) {
       if (filled($value = $filters[$column]['value'] ?? null)) {
         $query->where($column, $value);
       }
@@ -127,7 +129,7 @@ class UsageStatistics
     $firstDay = $range->first_at === null ? null : $this->localDayNumber($range->first_at);
     $lastDay = $range->last_at === null ? null : $this->localDayNumber($range->last_at);
     $days = $firstDay === null ? 1 : max(1, (int) ceil(($lastDay - $firstDay + 1) / 59));
-    $charts = ['first_day' => $firstDay, 'last_day' => $lastDay, 'days' => $days, 'time' => [], 'providers' => [], 'top' => []];
+    $charts = ['first_day' => $firstDay, 'last_day' => $lastDay, 'days' => $days, 'time' => [], 'providers' => [], 'top' => [], 'daily' => []];
     $this->initializeTimeBuckets($charts);
     $charts['top'] = (clone $query)->whereNotNull('provider')->reorder()->select('provider')
       ->selectRaw('COUNT(*) as attempts')->groupBy('provider')->orderByDesc('attempts')->orderBy('provider')->limit(10)->pluck('provider')->all();
@@ -210,12 +212,122 @@ class UsageStatistics
     $charts['providers'][$key][$outcome]++;
   }
 
+  /** Per-day sums behind the overview sparklines; days are grouped into the chart's buckets only when the charts finish. */
+  private function countDailyMetrics(array &$charts, object $row): void
+  {
+    $day = $this->localDayNumber($row->started_at);
+    $daily = $charts['daily'][$day] ?? ['tokens' => '0', 'cost' => '0.000000000000', 'duration_total' => '0', 'duration_known' => 0];
+    foreach (['input_tokens', 'output_tokens'] as $column) {
+      if ($row->$column !== null && ctype_digit((string) $row->$column)) {
+        $daily['tokens'] = Decimal::addIntegers($daily['tokens'], (string) $row->$column);
+      }
+    }
+    if (in_array($row->cost_source, ['provider', 'estimated'], true) && is_string($row->cost_usd) && Decimal::normalize($row->cost_usd) === $row->cost_usd) {
+      $daily['cost'] = Decimal::sum($daily['cost'], $row->cost_usd);
+    }
+    if ($row->duration_ms !== null && ctype_digit((string) $row->duration_ms)) {
+      $daily['duration_total'] = Decimal::addIntegers($daily['duration_total'], (string) $row->duration_ms);
+      $daily['duration_known']++;
+    }
+    $charts['daily'][$day] = $daily;
+  }
+
+  /** @return array<int, array{label: string, tokens: float, cost: float, duration: float}> One entry per chart bucket, in the same order as `time`. */
+  private function bucketSeries(array $charts): array
+  {
+    $buckets = [];
+    foreach ($charts['daily'] as $day => $daily) {
+      $key = (int) floor($day / $charts['days']) * $charts['days'];
+      $bucket = $buckets[$key] ?? ['tokens' => '0', 'cost' => '0.000000000000', 'duration_total' => '0', 'duration_known' => 0];
+      $bucket['tokens'] = Decimal::addIntegers($bucket['tokens'], $daily['tokens']);
+      $bucket['cost'] = Decimal::sum($bucket['cost'], $daily['cost']);
+      $bucket['duration_total'] = Decimal::addIntegers($bucket['duration_total'], $daily['duration_total']);
+      $bucket['duration_known'] += $daily['duration_known'];
+      $buckets[$key] = $bucket;
+    }
+    $series = [];
+    ksort($charts['time']);
+    foreach ($charts['time'] as $key => $row) {
+      $bucket = $buckets[$key] ?? ['tokens' => '0', 'cost' => '0.000000000000', 'duration_total' => '0', 'duration_known' => 0];
+      $series[] = [
+        'label' => $row['label'], 'tokens' => (float) $bucket['tokens'], 'cost' => (float) $bucket['cost'],
+        'duration' => $bucket['duration_known'] ? (float) $bucket['duration_total'] / $bucket['duration_known'] / 1000 : 0.0,
+      ];
+    }
+
+    return $series;
+  }
+
   private function finishCharts(array $charts): array
   {
     ['providers' => $providers, 'time' => $time, 'days' => $days] = $charts;
+    $series = $this->bucketSeries($charts);
     ksort($time);
     uasort($providers, fn (array $a, array $b): int => ($b['delivered'] + $b['failed'] + $b['active']) <=> ($a['delivered'] + $a['failed'] + $a['active']));
-    return ['time' => array_values($time), 'providers' => array_values($providers), 'bucket_days' => $days];
+    return ['time' => array_values($time), 'providers' => array_values($providers), 'bucket_days' => $days, 'series' => $series];
+  }
+
+  /**
+   * The window of the same length that ends the day before `from`, or null for an open or invalid period.
+   *
+   * @return array{from: string, until: string}|null
+   */
+  public function previousPeriod(array $period): ?array
+  {
+    $from = $period['from'] ?? null;
+    $until = $period['until'] ?? null;
+    if (! is_string($from) || ! is_string($until)) {
+      return null;
+    }
+    try {
+      $start = CarbonImmutable::createFromFormat('!Y-m-d', $from, 'UTC');
+      $end = CarbonImmutable::createFromFormat('!Y-m-d', $until, 'UTC');
+    } catch (\Exception) {
+      return null;
+    }
+    if ($start === false || $end === false || $start->format('Y-m-d') !== $from || $end->format('Y-m-d') !== $until || $end < $start) {
+      return null;
+    }
+    $length = (int) $start->diffInDays($end) + 1;
+
+    return ['from' => $start->subDays($length)->format('Y-m-d'), 'until' => $start->subDay()->format('Y-m-d')];
+  }
+
+  /** Percent change against the previous period; null when there is no base to compare with. */
+  public static function change(float|int|null $current, float|int|null $previous): ?float
+  {
+    if ($current === null || $previous === null) {
+      return null;
+    }
+    if ((float) $previous === 0.0) {
+      return (float) $current === 0.0 ? 0.0 : null;
+    }
+
+    return ((float) $current - (float) $previous) / (float) $previous * 100;
+  }
+
+  /**
+   * The most used actors or fields under the shared filters, by request count.
+   *
+   * @return array<int, array{key: string, actor_type: ?string, actor_id: ?string, field: ?string, requests: int}>
+   */
+  public function top(array $filters, string $kind, int $limit = 5): array
+  {
+    $columns = match ($kind) {
+      'actor' => ['actor_type', 'actor_id'],
+      'field' => ['field'],
+      default => throw new \InvalidArgumentException('Unsupported statistics ranking.'),
+    };
+    $query = $this->filteredQuery($filters)->reorder()->whereNotNull($columns[0]);
+    $rows = $query->select($columns)->selectRaw('COUNT(*) as requests')->groupBy($columns)
+      ->orderByDesc('requests')->orderBy($columns[0])->when($kind === 'actor', fn (Builder $query) => $query->orderBy('actor_id'))
+      ->limit(max(1, min($limit, 10)))->get();
+
+    return $rows->map(fn ($row): array => [
+      'key' => $kind === 'actor' ? self::actorKey($row->actor_type, $row->actor_id) : (string) $row->field,
+      'actor_type' => $row->actor_type ?? null, 'actor_id' => $row->actor_id ?? null, 'field' => $row->field ?? null,
+      'requests' => (int) $row->requests,
+    ])->all();
   }
 
   /** Bounded searchable options never inspect another panel or load a host User relationship. */
@@ -248,6 +360,43 @@ class UsageStatistics
     }
     $row = $query->first();
     return $row === null ? null : ($kind === 'actor' ? $row->actor_type . ' · ' . $row->actor_id : $row->{$this->column($kind)});
+  }
+
+  /** @var array<string, ?string> */
+  private array $actorLabels = [];
+
+  /** The label the host directory gives an actor, shared by the table, the rankings and the details. Never grants management access. */
+  public function actorLabel(string $type, string $id, ?string $fallback = null): string
+  {
+    abort_unless(self::canAccess(), 403);
+    $key = self::actorKey($type, $id);
+    if (! array_key_exists($key, $this->actorLabels)) {
+      $this->actorLabels[$key] = null;
+      $plugin = AiWriterPlugin::get();
+      // Reuse the existing authorized directory without granting statistics viewers management access.
+      try {
+        if ($plugin->canManage() && $plugin->hasActorDirectory()) {
+          $actor = new ActorIdentity($type, $id);
+          $this->actorLabels[$key] = $plugin->resolveActor($actor->token(), $plugin->controlContext())?->label ?: null;
+        }
+      } catch (\Throwable) {
+        // Removed users and unavailable host directories must not hide usage history.
+      }
+    }
+
+    return $this->actorLabels[$key] ?? $fallback ?? __('filament-ai-writer::statistics.table.user_unavailable');
+  }
+
+  /**
+   * Host labels are usually "Name · email"; a label without an e-mail part stays whole.
+   *
+   * @return array{0: string, 1: ?string}
+   */
+  public static function splitActorLabel(string $label): array
+  {
+    $parts = explode(' · ', $label, 2);
+
+    return count($parts) === 2 && str_contains($parts[1], '@') ? [$parts[0], $parts[1]] : [$label, null];
   }
 
   public static function actorKey(string $type, string $id): string
@@ -289,7 +438,7 @@ class UsageStatistics
   private function column(string $kind): string
   {
     return match ($kind) {
-      'provider' => 'provider', 'model' => 'model',
+      'provider' => 'provider', 'model' => 'model', 'field' => 'field',
       default => throw new \InvalidArgumentException('Unsupported statistics filter.'),
     };
   }
