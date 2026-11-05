@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.0.0](https://github.com/pdro-lucas/filament-ai-writer/compare/v0.7.1...v1.0.0) (2026-11-05)
+
+
+### ⚠ BREAKING CHANGES
+
+* Register AiWriterPlugin in every Filament panel using the action. PHP 8.2 and Laravel 11.28 or 12 are now required.
+
+### Features
+
+* **controls:** add period, author and change-type filters to activity ([#29](https://github.com/pdro-lucas/filament-ai-writer/issues/29)) ([0fb7c25](https://github.com/pdro-lucas/filament-ai-writer/commit/0fb7c25037c8638feec869c5a061280a551ae188))
+* **controls:** redesign controls page, user list and user panel ([#28](https://github.com/pdro-lucas/filament-ai-writer/issues/28)) ([56a3048](https://github.com/pdro-lucas/filament-ai-writer/commit/56a3048e7cdd2bca83da47a878a252ca9b8f297c))
+* **statistics:** redesign usage page with trends, rankings and page filters ([#26](https://github.com/pdro-lucas/filament-ai-writer/issues/26)) ([e112501](https://github.com/pdro-lucas/filament-ai-writer/commit/e11250132ed23a631bc46c4aa395f9697b3a4a3a))
+* turn the AI writer action into a full Filament plugin ([#21](https://github.com/pdro-lucas/filament-ai-writer/issues/21)) ([e73839b](https://github.com/pdro-lucas/filament-ai-writer/commit/e73839b05640a797867caa968e83314dcc4b040f))
+
 ## [0.7.1](https://github.com/pdro-lucas/filament-ai-writer/compare/v0.7.0...v0.7.1) (2026-11-03)
 
 
