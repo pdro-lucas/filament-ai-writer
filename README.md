@@ -206,6 +206,8 @@ The [upgrade guide](docs/upgrade.md) lists what each layer needs, how authorizat
 
 ## Usage
 
+![Illustrative AI Writer interface showing prompt-to-copy generation, provider selection, per-user credits, usage tracking and tone and length presets](art/features.webp)
+
 Import the action and attach it to a Filament field using `hintAction`, or `suffixAction` on a field that supports affixes. For other placements, see the [native form examples](docs/integration.md#place-the-writing-action).
 
 ```php
