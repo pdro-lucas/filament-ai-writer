@@ -571,26 +571,6 @@ Deletion selects bounded ID batches, freezes an upper ID for the run, and rechec
 
 Deleted rows disappear from subsequent history queries, known subtotals and measurement coverage. This metadata cleanup cannot recover stored text (none is kept), prove remote billing, retry inference or alter provider accounts. Keep external backups/audit records according to the host's policy before opting in.
 
-## Package structure
-
-```
-src/
-  Actions/
-    AiWriterAction.php                  # The Filament Action
-  Contracts/
-    AiProvider.php                      # Interface for AI providers
-  Events/
-    AiTextGenerated.php                 # Event dispatched after generation
-  Providers/
-    AnthropicProvider.php
-    OpenAiProvider.php
-    GeminiProvider.php
-    OpenRouterProvider.php
-  FilamentAiWriterServiceProvider.php
-config/
-  filament-ai-writer.php
-```
-
 ## Extending with a custom provider
 
 Implement the `AiProvider` contract and rebind it in your `AppServiceProvider`:
