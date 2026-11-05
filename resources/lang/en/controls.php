@@ -162,6 +162,7 @@ return [
     'empty' => 'No changes recorded',
     'date' => 'Date / time',
     'administrator' => 'Changed by',
+    'kind' => 'Change type',
     'change' => 'Change',
     'user' => 'Affected user',
     'all_users' => 'All users',

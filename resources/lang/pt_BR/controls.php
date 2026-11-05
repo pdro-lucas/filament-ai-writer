@@ -162,6 +162,7 @@ return [
     'empty' => 'Nenhuma alteração registrada',
     'date' => 'Data / hora',
     'administrator' => 'Feito por',
+    'kind' => 'Tipo de alteração',
     'change' => 'Alteração',
     'user' => 'Usuário afetado',
     'all_users' => 'Todos os usuários',
