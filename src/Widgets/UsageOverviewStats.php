@@ -58,8 +58,8 @@ class UsageOverviewStats extends StatsOverviewWidget
         ->description($t('cost_detail', [
           'partial' => $summary['unknown_cost'] && $knownCost ? $t('partial') . ' · ' : '', 'known' => $knownCost, 'total' => $attempts,
           'estimates' => $summary['estimated_cost_count'] ? ' · ' . $t('includes_estimates') : '',
-          'reported' => $summary['provider_cost_count'] ? $summary['provider_cost'] : $unavailable,
-          'estimated' => $summary['estimated_cost_count'] ? $summary['estimated_cost'] : $unavailable,
+          'reported' => $summary['provider_cost_count'] ? Currency::format($summary['provider_cost']) : $unavailable,
+          'estimated' => $summary['estimated_cost_count'] ? Currency::format($summary['estimated_cost']) : $unavailable,
         ])),
       Stat::make($t('duration'), $duration['known'] ? number_format((float) $duration['total'] / $duration['known'] / 1000, 2) . ' s' : $unavailable)
         ->description($t('duration_detail', ['known' => $duration['known'], 'total' => $attempts, 'partial' => $duration['unknown'] && $duration['known'] ? ' · ' . $t('partial') : ''])),
