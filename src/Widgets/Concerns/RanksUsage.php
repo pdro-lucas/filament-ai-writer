@@ -13,8 +13,6 @@ trait RanksUsage
 {
   use ReadsUsageStatistics;
 
-  protected static bool $isLazy = false;
-
   public function mount(): void
   {
     $this->bootUsageContext();

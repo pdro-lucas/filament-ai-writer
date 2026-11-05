@@ -10,6 +10,8 @@ class UsageTopFields extends TableWidget
 {
   use RanksUsage;
 
+  protected static bool $isLazy = false;
+
   protected function rankingHeading(): string
   {
     return __('filament-ai-writer::statistics.insights.top_fields');
