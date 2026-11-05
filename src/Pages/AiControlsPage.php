@@ -146,13 +146,31 @@ class AiControlsPage extends Page implements HasTable
     return $this->availabilityAction('disable', false);
   }
 
+  /** Availability lives in the page header (danger only for pausing); what it shows is read lazily, as actions mutate it. */
+  protected function getHeaderActions(): array
+  {
+    return [$this->disableAction(), $this->enableAction()];
+  }
+
+  public function getSubheading(): string|\Illuminate\Contracts\Support\Htmlable|null
+  {
+    if ($this->section !== 'settings') {
+      return null;
+    }
+
+    return AiWriterPlugin::get()->controlsService()->enabled($this->context()) ? __('filament-ai-writer::controls.availability.enabled') : __('filament-ai-writer::controls.availability.disabled');
+  }
+
   protected function availabilityAction(string $name, bool $enabled): Action
   {
-    return Action::make($name)->label($enabled ? __('filament-ai-writer::controls.availability.enable') : __('filament-ai-writer::controls.availability.pause'))->color($enabled ? 'primary' : 'danger')
-      ->visible(fn (): bool => AiWriterPlugin::get()->controlsService()->enabled($this->context()) !== $enabled)
-      // One click by default; a dialog only appears when requireReason() asks for a reason here.
-      ->modal(fn (): bool => Reason::isRequired('availability'))
-      ->modalHeading($enabled ? __('filament-ai-writer::controls.availability.enable') : __('filament-ai-writer::controls.availability.pause'))->modalDescription(__('filament-ai-writer::controls.availability.modal'))
+    return Action::make($name)->label($enabled ? __('filament-ai-writer::controls.availability.enable') : __('filament-ai-writer::controls.availability.pause'))->color($enabled ? 'gray' : 'danger')
+      ->visible(fn (): bool => $this->section === 'settings' && AiWriterPlugin::get()->controlsService()->enabled($this->context()) !== $enabled)
+      // Pausing always confirms (it stops everyone); enabling is one click unless requireReason() asks for a reason here.
+      ->modal(fn (): bool => !$enabled || Reason::isRequired('availability'))
+      ->modalHeading($enabled ? __('filament-ai-writer::controls.availability.enable') : __('filament-ai-writer::controls.availability.pause'))
+      ->modalDescription($enabled ? __('filament-ai-writer::controls.availability.modal') : __('filament-ai-writer::controls.availability.pause_modal'))
+      ->modalSubmitActionLabel($enabled ? __('filament-ai-writer::controls.availability.enable') : __('filament-ai-writer::controls.availability.pause'))
+      ->modalSubmitAction(fn (Action $action) => $enabled ? $action : $action->color('danger'))
       ->schema(fn (): array => Reason::isRequired('availability') ? [$this->reasonField('availability')] : [])
       ->action(function (array $data) use ($enabled): void {
         $context = $this->context();
@@ -204,14 +222,44 @@ class AiControlsPage extends Page implements HasTable
     $this->setPage($state['page'] ?? 1, $this->getTablePaginationPageName());
   }
 
+  /** A secondary action beside the current-period line: starting a new period for everyone is destructive, so it confirms. */
   public function renewAction(): Action
   {
-    return Action::make('renew')->label(__('filament-ai-writer::controls.renew.label'))->color('danger')
+    return Action::make('renew')->label(__('filament-ai-writer::controls.renew.label'))->color('gray')->outlined()->size('sm')
+      ->visible(fn (): bool => $this->quotaLimitConfigured())
       ->modalHeading(__('filament-ai-writer::controls.renew.heading'))
       ->modalDescription(__('filament-ai-writer::controls.renew.description'))
+      ->modalSubmitActionLabel(__('filament-ai-writer::controls.renew.confirm'))
+      ->modalSubmitAction(fn (Action $action) => $action->color('danger'))
       ->modal()->schema([$this->reasonField('quota_renew')])->action(function (array $data): void {
         $this->saveChange(fn () => AiWriterPlugin::get()->credits()->renew($this->context(), $data['reason'] ?? null));
       });
+  }
+
+  protected function quotaLimitConfigured(): bool
+  {
+    $policy = AiWriterPlugin::get()->credits()->policy($this->context());
+
+    return $policy['enabled'] && $policy['limit'] !== null;
+  }
+
+  /** The current period in one line, read when rendered so it follows a save or a renewal in the same response. */
+  protected function currentPeriodText(): string
+  {
+    $policy = AiWriterPlugin::get()->credits()->policy($this->context());
+    // A schedule picked but not saved yet: say when the period would end, from the same cut function the save uses.
+    $selected = $this->creditData['renewal'] ?? null;
+    if (is_string($selected) && in_array($selected, ['manual', 'daily', 'weekly', 'monthly'], true) && $selected !== $policy['renewal']) {
+      $cut = AiWriterPlugin::get()->credits()->nextCut($selected, $policy['period_timezone']);
+
+      return $cut === null ? __('filament-ai-writer::controls.credits.preview_manual') : __('filament-ai-writer::controls.credits.preview', ['until' => HostDates::dateTimeToMinutes($cut)]);
+    }
+    $since = $policy['period_started_at'] === null ? null : HostDates::dateOf($policy['period_started_at']);
+    if ($policy['renews_at'] === null) {
+      return __('filament-ai-writer::controls.credits.period_manual', ['since' => $since ?? '—']);
+    }
+
+    return __('filament-ai-writer::controls.credits.period', ['since' => $since ?? '—', 'until' => HostDates::dateTimeToMinutes($policy['renews_at'])]);
   }
 
   protected function fillSettings(): void
@@ -225,9 +273,9 @@ class AiControlsPage extends Page implements HasTable
     }
   }
 
-  protected function integerField(string $name, string $label, int $min): TextInput
+  protected function integerField(string $name, string $label, int $min, ?string $unit = null): TextInput
   {
-    return ControlFields::integerField($name, $label, $min);
+    return ControlFields::integerField($name, $label, $min, $unit);
   }
 
   protected function parseInteger(mixed $value, string $field, int $min = 0): int
@@ -238,33 +286,25 @@ class AiControlsPage extends Page implements HasTable
   public function creditForm(Schema $schema): Schema
   {
     return $schema->statePath('creditData')->columns(2)->components([
-      Toggle::make('enabled')->label(__('filament-ai-writer::controls.form.credits.label'))->columnSpanFull()
-        ->helperText(__('filament-ai-writer::controls.form.credits.help'))
-        ->hintAction($this->informationAction('credits', __('filament-ai-writer::controls.form.credits.label'), __('filament-ai-writer::controls.form.credits.info'))),
-      $this->integerField('limit', __('filament-ai-writer::controls.form.limit'), 0)->required(),
-      Select::make('renewal')->label(__('filament-ai-writer::controls.form.renewal.label'))->options($this->renewalOptions())->required()->native()->placeholder(__('filament-ai-writer::controls.form.renewal.placeholder'))
-        ->helperText(__('filament-ai-writer::controls.form.renewal.help'))
-        ->hintAction($this->informationAction('renewal', __('filament-ai-writer::controls.form.renewal.info_label'), __('filament-ai-writer::controls.form.renewal.info'))),
+      Toggle::make('enabled')->label(__('filament-ai-writer::controls.form.credits.label'))->columnSpanFull(),
+      $this->integerField('limit', __('filament-ai-writer::controls.form.limit'), 0, __('filament-ai-writer::controls.field.unit.credits'))->required(),
+      Select::make('renewal')->label(__('filament-ai-writer::controls.form.renewal.label'))->options($this->renewalOptions())->required()->native()->live()->placeholder(__('filament-ai-writer::controls.form.renewal.placeholder')),
     ]);
   }
 
   public function rateForm(Schema $schema): Schema
   {
     return $schema->statePath('rateData')->columns(2)->components([
-      Toggle::make('rate_enabled')->label(__('filament-ai-writer::controls.form.rate.label'))->columnSpanFull()
-        ->helperText(__('filament-ai-writer::controls.form.rate.help'))
-        ->hintAction($this->informationAction('frequency', __('filament-ai-writer::controls.form.rate.info_label'), __('filament-ai-writer::controls.form.rate.info'))),
+      Toggle::make('rate_enabled')->label(__('filament-ai-writer::controls.form.rate.label'))->columnSpanFull(),
       $this->integerField('rate_limit', __('filament-ai-writer::controls.form.rate.limit'), 1),
-      $this->integerField('rate_window_seconds', __('filament-ai-writer::controls.form.rate.window'), 1),
+      $this->integerField('rate_window_seconds', __('filament-ai-writer::controls.form.rate.window'), 1, __('filament-ai-writer::controls.field.unit.seconds')),
     ]);
   }
 
   public function concurrencyForm(Schema $schema): Schema
   {
     return $schema->statePath('concurrencyData')->columns(2)->components([
-      Toggle::make('concurrency_enabled')->label(__('filament-ai-writer::controls.form.concurrency.label'))->columnSpanFull()
-        ->helperText(__('filament-ai-writer::controls.form.concurrency.help'))
-        ->hintAction($this->informationAction('simultaneous', __('filament-ai-writer::controls.form.concurrency.heading'), __('filament-ai-writer::controls.form.concurrency.info'))),
+      Toggle::make('concurrency_enabled')->label(__('filament-ai-writer::controls.form.concurrency.label'))->columnSpanFull(),
       $this->integerField('concurrency_limit', __('filament-ai-writer::controls.form.concurrency.limit'), 1),
     ]);
   }
@@ -272,12 +312,10 @@ class AiControlsPage extends Page implements HasTable
   public function failureForm(Schema $schema): Schema
   {
     return $schema->statePath('failureData')->columns(3)->components([
-      Toggle::make('failure_enabled')->label(__('filament-ai-writer::controls.form.failure.label'))->columnSpanFull()
-        ->helperText(__('filament-ai-writer::controls.form.failure.help'))
-        ->hintAction($this->informationAction('failures', __('filament-ai-writer::controls.form.failure.info_label'), __('filament-ai-writer::controls.form.failure.info'))),
+      Toggle::make('failure_enabled')->label(__('filament-ai-writer::controls.form.failure.label'))->columnSpanFull(),
       $this->integerField('failure_limit', __('filament-ai-writer::controls.form.failure.limit'), 1),
-      $this->integerField('failure_window_seconds', __('filament-ai-writer::controls.form.failure.window'), 1),
-      $this->integerField('failure_pause_seconds', __('filament-ai-writer::controls.form.failure.pause'), 1),
+      $this->integerField('failure_window_seconds', __('filament-ai-writer::controls.form.failure.window'), 1, __('filament-ai-writer::controls.field.unit.seconds')),
+      $this->integerField('failure_pause_seconds', __('filament-ai-writer::controls.form.failure.pause'), 1, __('filament-ai-writer::controls.field.unit.seconds')),
     ]);
   }
 
@@ -312,31 +350,115 @@ class AiControlsPage extends Page implements HasTable
     return $values;
   }
 
-  public function confirmSettings(string $group): void
+  /** @var array<string, string> group => audited action */
+  protected const GROUP_ACTIONS = ['credit' => 'quota_policy', 'rate' => 'abuse_policy', 'concurrency' => 'abuse_policy', 'failure' => 'abuse_policy'];
+
+  /**
+   * The groups whose validated form values differ from what is stored now, group => values. Throws the strict
+   * validation of any group, changed or not, so a bad field is reported where it is.
+   *
+   * @param array<string, array<string, mixed>>|null $submitted group => raw values; null reads the open forms
+   * @return array<string, array<string, mixed>>
+   */
+  protected function changedSettings(?array $submitted = null): array
+  {
+    $context = $this->context();
+    $plugin = AiWriterPlugin::get();
+    $stored = ['credit' => $plugin->credits()->policy($context)] + array_fill_keys(['rate', 'concurrency', 'failure'], $plugin->abuse()->policy($context));
+    $changed = [];
+    foreach (array_keys(self::GROUP_ACTIONS) as $group) {
+      if ($submitted !== null && !array_key_exists($group, $submitted)) {
+        continue;
+      }
+      // Compare what is typed with what is stored first: an untouched group is never validated (a workspace that never
+      // configured credits has no limit yet, and must still be able to save a frequency change) nor written.
+      $raw = $submitted === null ? $this->{$group . 'Data'} : (is_array($submitted[$group]) ? $submitted[$group] : []);
+      if (!$this->differsFromStored($group, $raw, $stored[$group])) {
+        continue;
+      }
+      $changed[$group] = $this->settingValues($group, $submitted === null ? $this->{$group . 'Form'}->getState() : $raw);
+    }
+    return $changed;
+  }
+
+  /** @param array<string, mixed> $raw */
+  protected function differsFromStored(string $group, array $raw, array $stored): bool
+  {
+    $fields = match ($group) {
+      'credit' => ['enabled', 'limit', 'renewal'],
+      'rate' => ['rate_enabled', 'rate_limit', 'rate_window_seconds'],
+      'concurrency' => ['concurrency_enabled', 'concurrency_limit'],
+      'failure' => ['failure_enabled', 'failure_limit', 'failure_window_seconds', 'failure_pause_seconds'],
+    };
+    foreach ($fields as $field) {
+      if ($this->normalizeSetting($field, $raw[$field] ?? null) !== $this->normalizeSetting($field, $stored[$field] ?? null)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  protected function normalizeSetting(string $field, mixed $value): mixed
+  {
+    return match (true) {
+      $field === 'enabled' || str_ends_with($field, '_enabled') => (bool) $value,
+      $field === 'renewal' => (string) $value,
+      // Digits compare as numbers; anything else ("1.5", "1e3") stays itself so it counts as a change and fails validation.
+      default => $value === null || $value === '' ? null : (is_string($value) && ctype_digit($value) ? (int) $value : $value),
+    };
+  }
+
+  /** The one save button: validates every group, then asks (one reason when required) only for the groups that changed. */
+  public function confirmSettings(): void
   {
     $this->context();
-    abort_unless(in_array($group, ['credit', 'rate', 'concurrency', 'failure'], true), 404);
-    $values = $this->settingValues($group, $this->{$group . 'Form'}->getState());
-    $this->mountAction('saveSettings', ['group' => $group, 'settings' => $values]);
+    $changes = $this->changedSettings();
+    if ($changes === []) {
+      Notification::make()->info()->title(__('filament-ai-writer::controls.save.unchanged'))->send();
+      return;
+    }
+    // From the save button the button's own action is open: replace it rather than nest the dialog inside it.
+    $this->replaceMountedAction('saveSettings', ['changes' => $changes]);
+  }
+
+  /** The audited action of the first changed group that needs a reason; null when none does. */
+  protected function reasonAction(array $arguments): ?string
+  {
+    foreach (array_keys(is_array($arguments['changes'] ?? null) ? $arguments['changes'] : []) as $group) {
+      if (isset(self::GROUP_ACTIONS[$group]) && Reason::isRequired(self::GROUP_ACTIONS[$group])) {
+        return self::GROUP_ACTIONS[$group];
+      }
+    }
+    return null;
   }
 
   public function saveSettingsAction(): Action
   {
     return Action::make('saveSettings')->label(__('filament-ai-writer::controls.save.label'))->modalHeading(__('filament-ai-writer::controls.save.heading'))
-      ->modalDescription(fn (array $arguments): string => __('filament-ai-writer::controls.save.apply', ['what' => __('filament-ai-writer::controls.save.' . (in_array($arguments['group'] ?? '', ['credit', 'rate', 'concurrency', 'failure'], true) ? $arguments['group'] : 'default')), 'selected' => $this->settingsDescription($arguments)]))
-      // Saving settings is one click unless requireReason() asks for a reason here.
-      ->modal(fn (array $arguments): bool => Reason::isRequired($this->settingsAction($arguments)))
-      ->schema(fn (array $arguments): array => Reason::isRequired($this->settingsAction($arguments)) ? [$this->reasonField($this->settingsAction($arguments))] : [])
+      ->modalDescription(fn (array $arguments): string => __('filament-ai-writer::controls.save.apply', ['selected' => $this->settingsDescription($arguments)]))
+      // Saving is one click unless requireReason() asks for a reason for one of the changed groups.
+      ->modal(fn (array $arguments): bool => $this->reasonAction($arguments) !== null)
+      ->schema(fn (array $arguments): array => ($action = $this->reasonAction($arguments)) !== null ? [$this->reasonField($action)] : [])
       ->action(function (array $data, array $arguments): void {
         $context = $this->context();
-        $group = $arguments['group'] ?? '';
-        $values = $this->settingValues($group, is_array($arguments['settings'] ?? null) ? $arguments['settings'] : []);
-        $this->saveChange(function () use ($context, $group, $values, $data): void {
-          if ($group === 'credit') {
-            AiWriterPlugin::get()->credits()->configure($context, $values['enabled'], $values['limit'], $values['renewal'], $data['reason'] ?? null);
-          } else {
-            AiWriterPlugin::get()->abuse()->configure($context, $values, $data['reason'] ?? null);
-          }
+        // Re-validate and re-diff on the server: the dialog's arguments are only a hint of what the administrator saw.
+        $changes = $this->changedSettings(is_array($arguments['changes'] ?? null) ? $arguments['changes'] : []);
+        if ($changes === []) {
+          Notification::make()->info()->title(__('filament-ai-writer::controls.save.unchanged'))->send();
+          return;
+        }
+        $plugin = AiWriterPlugin::get();
+        $this->saveChange(function () use ($context, $changes, $data, $plugin): void {
+          // Every changed group writes its own audit entry; the groups commit together or not at all.
+          $plugin->credits()->connection()->transaction(function () use ($context, $changes, $data, $plugin): void {
+            foreach ($changes as $group => $values) {
+              if ($group === 'credit') {
+                $plugin->credits()->configure($context, $values['enabled'], $values['limit'], $values['renewal'], $data['reason'] ?? null);
+              } else {
+                $plugin->abuse()->configure($context, $values, $data['reason'] ?? null);
+              }
+            }
+          });
           $this->fillSettings();
         });
       });
@@ -345,17 +467,22 @@ class AiControlsPage extends Page implements HasTable
   protected function settingsDescription(array $arguments): string
   {
     try {
-      $group = $arguments['group'] ?? '';
-      $values = $this->settingValues($group, is_array($arguments['settings'] ?? null) ? $arguments['settings'] : []);
-      $on = ($values[$group === 'credit' ? 'enabled' : $group . '_enabled'] ?? false) ? __('filament-ai-writer::controls.selected.on') : __('filament-ai-writer::controls.selected.off');
-      $number = fn (string $key): string => $values[$key] === null ? __('filament-ai-writer::controls.selected.not_configured') : number_format($values[$key]);
+      $lines = [];
+      foreach (is_array($arguments['changes'] ?? null) ? $arguments['changes'] : [] as $group => $values) {
+        $values = $this->settingValues($group, is_array($values) ? $values : []);
+        $on = ($values[$group === 'credit' ? 'enabled' : $group . '_enabled'] ?? false) ? __('filament-ai-writer::controls.selected.on') : __('filament-ai-writer::controls.selected.off');
+        $number = fn (string $key): string => $values[$key] === null ? __('filament-ai-writer::controls.selected.not_configured') : number_format($values[$key]);
+        $lines[] = __('filament-ai-writer::controls.save.name.' . $group) . ': ' . match ($group) {
+          'credit' => __('filament-ai-writer::controls.selected.credit', ['on' => $on, 'limit' => $number('limit'), 'renewal' => $this->renewalOptions()[$values['renewal']] ?? $values['renewal']]),
+          'rate' => __('filament-ai-writer::controls.selected.rate', ['on' => $on, 'limit' => $number('rate_limit'), 'window' => $number('rate_window_seconds')]),
+          'concurrency' => __('filament-ai-writer::controls.selected.concurrency', ['on' => $on, 'limit' => $number('concurrency_limit')]),
+          'failure' => __('filament-ai-writer::controls.selected.failure', ['on' => $on, 'limit' => $number('failure_limit'), 'window' => $number('failure_window_seconds'), 'pause' => $number('failure_pause_seconds')]),
+        };
+      }
+      // The consequences of each changed group, as before.
+      $notes = array_map(fn (string $group): string => __('filament-ai-writer::controls.save.note.' . $group), array_keys(array_filter(is_array($arguments['changes'] ?? null) ? $arguments['changes'] : [], fn ($group) => isset(self::GROUP_ACTIONS[$group]), ARRAY_FILTER_USE_KEY)));
 
-      return __('filament-ai-writer::controls.selected.prefix') . match ($group) {
-        'credit' => __('filament-ai-writer::controls.selected.credit', ['on' => $on, 'limit' => $number('limit'), 'renewal' => $this->renewalOptions()[$values['renewal']] ?? $values['renewal']]),
-        'rate' => __('filament-ai-writer::controls.selected.rate', ['on' => $on, 'limit' => $number('rate_limit'), 'window' => $number('rate_window_seconds')]),
-        'concurrency' => __('filament-ai-writer::controls.selected.concurrency', ['on' => $on, 'limit' => $number('concurrency_limit')]),
-        'failure' => __('filament-ai-writer::controls.selected.failure', ['on' => $on, 'limit' => $number('failure_limit'), 'window' => $number('failure_window_seconds'), 'pause' => $number('failure_pause_seconds')]),
-      };
+      return implode(' ', [...$lines, ...$notes]);
     } catch (ValidationException) {
       return __('filament-ai-writer::controls.save.invalid');
     }
@@ -367,20 +494,9 @@ class AiControlsPage extends Page implements HasTable
     return array_map(fn (string $key): string => __('filament-ai-writer::controls.renewal.' . $key), array_combine(['manual', 'daily', 'weekly', 'monthly'], ['manual', 'daily', 'weekly', 'monthly']));
   }
 
-  protected function informationAction(string $name, string $label, string $details): Action
-  {
-    return ControlFields::informationAction($name, $label, $details);
-  }
-
   protected function reasonField(string $action): Textarea
   {
     return ControlFields::reasonField($action);
-  }
-
-  /** The audited action behind a settings save: credit settings are the quota policy, the rest abuse protection. */
-  protected function settingsAction(array $arguments): string
-  {
-    return ($arguments['group'] ?? '') === 'credit' ? 'quota_policy' : 'abuse_policy';
   }
 
   protected function saveChange(\Closure $change): void
@@ -402,24 +518,19 @@ class AiControlsPage extends Page implements HasTable
   {
     $this->context();
     if ($this->section === 'users') {
-      return $table->records(function (?string $search): array {
-        $context = $this->context();
-        $plugin = AiWriterPlugin::get();
-        if (!$plugin->hasActorDirectory()) { return []; }
-        try {
-          $records = [];
-          foreach ($plugin->searchActors($search ?? '', $context) as $token => $label) {
-            $actor = ActorIdentity::fromToken($token);
-            $records[$token] = ['token' => $token, 'label' => $label, 'id' => $actor->id];
-          }
-          return $records;
-        } catch (AuthorizationException|HttpException $exception) { throw $exception; }
-        catch (Throwable) { $this->directoryError = true; return []; }
-      })->columns([
-        TextColumn::make('label')->label(__('filament-ai-writer::controls.directory.user'))->wrap(),
+      return $table->records(fn (?string $search): array => $this->directoryRecords($search ?? ''))->columns([
+        TextColumn::make('name')->label(__('filament-ai-writer::controls.directory.user'))->description(fn (array $record): ?string => $record['email'])->wrap(),
+        TextColumn::make('status')->label(__('filament-ai-writer::controls.directory.status'))->badge()
+          ->formatStateUsing(fn (string $state): string => __('filament-ai-writer::credits.status.' . ($state === 'allowed' ? 'allowed' : ($state === 'blocked' ? 'blocked' : 'paused'))))
+          ->color(fn (string $state): string => match ($state) { 'allowed' => 'success', 'blocked' => 'danger', default => 'warning' }),
+        TextColumn::make('credits')->label(__('filament-ai-writer::controls.directory.credits'))->placeholder('—')->alignEnd(),
+        TextColumn::make('requests')->label(__('filament-ai-writer::controls.directory.requests'))->numeric()->placeholder('—')->alignEnd()
+          ->visible(fn (): bool => $this->showsUsage()),
+        TextColumn::make('last_used')->label(__('filament-ai-writer::controls.directory.last_used'))->dateTime()->placeholder('—')
+          ->visible(fn (): bool => $this->showsUsage()),
       ])->searchable(AiWriterPlugin::get()->hasActorDirectory())->searchPlaceholder(__('filament-ai-writer::controls.directory.search'))
         ->paginated(false)->description(__('filament-ai-writer::controls.directory.limit'))
-        ->extraAttributes(['class' => 'ai-controls-directory ai-controls-list'])
+        ->recordAction('manageAiUser')
         ->recordActions([ManageAiUserAction::make()->actorUsing(fn (array $record): ActorIdentity => ActorIdentity::fromToken($record['token']))])
         ->emptyStateHeading(fn (): string => !AiWriterPlugin::get()->hasActorDirectory() ? __('filament-ai-writer::controls.directory.not_configured') : ($this->directoryError ? __('filament-ai-writer::controls.directory.unavailable') : __('filament-ai-writer::controls.directory.none')))
         ->emptyStateDescription(fn (): string => !AiWriterPlugin::get()->hasActorDirectory() ? __('filament-ai-writer::controls.directory.not_configured_description') : ($this->directoryError ? __('filament-ai-writer::controls.directory.unavailable_description') : __('filament-ai-writer::controls.directory.none_description')));
@@ -431,7 +542,8 @@ class AiControlsPage extends Page implements HasTable
         // No format or timezone here: the host's Filament defaults (also per user) decide how dates look.
         TextColumn::make('created_at')->label(__('filament-ai-writer::controls.activity.date'))->tooltip(__('filament-ai-writer::statistics.timezone', ['timezone' => HostDates::timezone()]))->dateTime(),
         TextColumn::make('administrator_id')->label(__('filament-ai-writer::controls.activity.administrator'))->wrap()
-          ->formatStateUsing(fn (ControlAudit $record): string => $this->auditIdentity($record->administrator_type, $record->administrator_id)),
+          ->formatStateUsing(fn (ControlAudit $record): string => \PdroLucas\FilamentAiWriter\Usage\UsageStatistics::splitActorLabel($this->auditIdentity($record->administrator_type, $record->administrator_id))[0])
+          ->description(fn (ControlAudit $record): ?string => \PdroLucas\FilamentAiWriter\Usage\UsageStatistics::splitActorLabel($this->auditIdentity($record->administrator_type, $record->administrator_id))[1]),
         TextColumn::make('action')->label(__('filament-ai-writer::controls.activity.change'))->formatStateUsing(fn (ControlAudit $record): string => __('filament-ai-writer::controls.activity.' . match ($record->action) {
           'availability' => $record->after['enabled'] ? 'availability_on' : 'availability_off',
           'block' => $record->after['blocked'] ? 'block_on' : 'block_off',
@@ -439,9 +551,86 @@ class AiControlsPage extends Page implements HasTable
           default => 'default',
         })),
         TextColumn::make('actor_id')->label(__('filament-ai-writer::controls.activity.user'))->placeholder(__('filament-ai-writer::controls.activity.all_users'))->wrap()
-          ->formatStateUsing(fn (ControlAudit $record): string => $this->auditIdentity($record->actor_type, $record->actor_id)),
+          ->formatStateUsing(fn (ControlAudit $record): string => \PdroLucas\FilamentAiWriter\Usage\UsageStatistics::splitActorLabel($this->auditIdentity($record->actor_type, $record->actor_id))[0])
+          ->description(fn (ControlAudit $record): ?string => $record->actor_type === null ? null : \PdroLucas\FilamentAiWriter\Usage\UsageStatistics::splitActorLabel($this->auditIdentity($record->actor_type, $record->actor_id))[1]),
         TextColumn::make('reason')->label(__('filament-ai-writer::controls.activity.reason'))->placeholder(__('filament-ai-writer::controls.reason.none'))->wrap(),
       ])->emptyStateHeading(__('filament-ai-writer::controls.activity.empty'));
+  }
+
+  /** Request counts and last use come from the usage ledger, so they follow the Statistics permission, not just this page's. */
+  protected function showsUsage(): bool
+  {
+    $plugin = AiWriterPlugin::get();
+
+    return $plugin->isUsageTrackingEnabled() && $plugin->canViewStatistics();
+  }
+
+  /**
+   * The directory's matches (at most 50, from the host's scoped directory) with their status, credits and usage.
+   * Everything beyond the directory is read for all rows together, in a fixed number of queries, and only for the
+   * actors the directory returned.
+   *
+   * @return array<string, array<string, mixed>>
+   */
+  protected function directoryRecords(string $search): array
+  {
+    $context = $this->context();
+    $plugin = AiWriterPlugin::get();
+    if (!$plugin->hasActorDirectory()) { return []; }
+    try {
+      $actors = [];
+      $labels = [];
+      foreach ($plugin->searchActors($search, $context) as $token => $label) {
+        $actors[$token] = ActorIdentity::fromToken($token);
+        $labels[$token] = $label;
+      }
+      $list = array_values($actors);
+      $enabled = $plugin->controlsService()->enabled($context);
+      $blocked = $plugin->controlsService()->blockedAmong($context, $list);
+      $credits = $plugin->credits()->overview($context, $list);
+      $failurePaused = $plugin->abuse()->pausedByFailures($context, $list);
+      $quotas = $plugin->credits()->quotaEnabled($context);
+      $usage = $this->showsUsage() ? $this->usageByActor($context, $list) : [];
+      $records = [];
+      foreach ($actors as $token => $actor) {
+        $key = $actor->key();
+        $balance = ['enabled' => $quotas] + $credits[$key];
+        $refusal = \PdroLucas\FilamentAiWriter\Schemas\AiCreditStatus::refusal($balance, ['refusal' => isset($failurePaused[$key]) ? 'failure_pause' : null], ['enabled' => $enabled, 'blocked' => isset($blocked[$key])]);
+        [$name, $email] = \PdroLucas\FilamentAiWriter\Usage\UsageStatistics::splitActorLabel($labels[$token]);
+        $records[$token] = ['token' => $token, 'name' => $name, 'email' => $email, 'id' => $actor->id,
+          'status' => $refusal === null ? 'allowed' : ($refusal === 'blocked' ? 'blocked' : 'paused'),
+          'credits' => !$quotas ? null : ($balance['limit'] === null ? __('filament-ai-writer::controls.directory.no_limit') : number_format($balance['consumed']) . ' / ' . number_format($balance['limit'])),
+          'requests' => $usage[$key]['requests'] ?? ($this->showsUsage() ? 0 : null), 'last_used' => $usage[$key]['last_used'] ?? null];
+      }
+      return $records;
+    } catch (AuthorizationException|HttpException $exception) { throw $exception; }
+    catch (Throwable) { $this->directoryError = true; return []; }
+  }
+
+  /**
+   * Requests in the last 30 days and the last use per listed actor: one grouped query over this panel's ledger.
+   *
+   * @param array<int, ActorIdentity> $actors
+   * @return array<string, array{requests: int, last_used: ?\Carbon\CarbonImmutable}> by actor key
+   */
+  protected function usageByActor(ControlContext $context, array $actors): array
+  {
+    if ($actors === []) { return []; }
+    $since = \Carbon\CarbonImmutable::now('UTC')->subDays(30)->toDateTimeString();
+    $wanted = [];
+    foreach ($actors as $actor) { $wanted[$actor->key()] = true; }
+    $rows = \PdroLucas\FilamentAiWriter\Models\UsageAttempt::query()->where('panel_id', $context->panelId)
+      ->whereIn('actor_id', array_map(fn (ActorIdentity $actor): string => $actor->id, $actors))
+      ->selectRaw('actor_type, actor_id, SUM(CASE WHEN started_at >= ? THEN 1 ELSE 0 END) as requests, MAX(started_at) as last_used', [$since])
+      ->groupBy('actor_type', 'actor_id')->toBase()->get();
+    $usage = [];
+    foreach ($rows as $row) {
+      $key = (new ActorIdentity($row->actor_type, $row->actor_id))->key();
+      if (isset($wanted[$key])) {
+        $usage[$key] = ['requests' => (int) $row->requests, 'last_used' => $row->last_used === null ? null : \Carbon\CarbonImmutable::parse($row->last_used, 'UTC')];
+      }
+    }
+    return $usage;
   }
 
   public function getTableRecordsPerPage(): int
@@ -464,44 +653,33 @@ class AiControlsPage extends Page implements HasTable
     return $this->auditIdentities[$token];
   }
 
-  protected function settingsSaveAction(string $group, string $label): Action
-  {
-    return $this->saveSettingsAction()->name('save' . ucfirst($group))->label($label)
-      ->mountUsing(function (?Schema $schema) use ($group): void {
-        $this->context();
-        $values = $this->settingValues($group, $this->getSchema($group . 'Form')->getState());
-        $this->mergeMountedActionArguments(['group' => $group, 'settings' => $values]);
-        $schema?->fill();
-      });
-  }
-
   public function settings(Schema $schema): Schema
   {
     $context = $this->context();
     $plugin = AiWriterPlugin::get();
-    $enabled = $plugin->controlsService()->enabled($context);
     $policy = $plugin->credits()->policy($context);
-    $renewal = $policy['renews_at'] === null ? __('filament-ai-writer::controls.credits.manual_renewal') : HostDates::dateTime($policy['renews_at']);
     return $schema->components([
       Section::make(__('filament-ai-writer::controls.directory.heading'))->aside()->compact()
         ->description(__('filament-ai-writer::controls.directory.description'))
         ->schema([Actions::make([Action::make('directoryDocs')->label(__('filament-ai-writer::controls.directory.setup'))->link()
           ->url(self::DIRECTORY_DOCS_URL, shouldOpenInNewTab: true)])->key('directoryActions')])
         ->visible(!$plugin->hasActorDirectory() && $plugin->canManage()),
-      Section::make(__('filament-ai-writer::controls.availability.heading'))->aside()->compact()->description($enabled ? __('filament-ai-writer::controls.availability.enabled') : __('filament-ai-writer::controls.availability.disabled'))
-        ->schema([Actions::make([$enabled ? $this->disableAction() : $this->enableAction()])->key('availabilityActions')]),
       Section::make(__('filament-ai-writer::controls.credits.heading'))->aside()->compact()->description(__('filament-ai-writer::controls.credits.description', ['state' => $policy['enabled'] ? __('filament-ai-writer::controls.credits.quotas_on') : __('filament-ai-writer::controls.credits.quotas_off')]))
         ->schema([
           EmbeddedSchema::make('creditForm'),
-          \Filament\Infolists\Components\TextEntry::make('current_period')->label(__('filament-ai-writer::controls.credits.current_period'))->state($policy['limit'] === null ? __('filament-ai-writer::controls.credits.no_limit') : $renewal),
-          Actions::make([$this->settingsSaveAction('credit', __('filament-ai-writer::controls.credits.save')), $this->renewAction()->visible($policy['limit'] !== null)])->key('creditActions'),
+          // Hidden when quotas are off or no limit is set; both parts read the current state when rendered.
+          \Filament\Schemas\Components\Flex::make([
+            \Filament\Infolists\Components\TextEntry::make('current_period')->label(__('filament-ai-writer::controls.credits.heading'))->hiddenLabel()->state(fn (): string => $this->currentPeriodText()),
+            Actions::make([$this->renewAction()])->key('creditActions')->grow(false),
+          ])->verticalAlignment(\Filament\Support\Enums\VerticalAlignment::Center)->visible(fn (): bool => $this->quotaLimitConfigured()),
         ]),
       ...array_map(fn (string $group, string $heading, string $description): Section => Section::make($heading)->aside()->compact()->description($description)->schema([
         EmbeddedSchema::make($group . 'Form'),
-        Actions::make([$this->settingsSaveAction($group, __('filament-ai-writer::controls.form.save_group', ['group' => mb_strtolower($heading)]))])->key($group . 'Actions'),
       ]), ['rate', 'concurrency', 'failure'], [__('filament-ai-writer::controls.form.rate.heading'), __('filament-ai-writer::controls.form.concurrency.heading'), __('filament-ai-writer::controls.form.failure.heading')], [
         __('filament-ai-writer::controls.form.rate.description'), __('filament-ai-writer::controls.form.concurrency.description'), __('filament-ai-writer::controls.form.failure.description'),
       ]),
+      // One button for the whole page: it saves only the groups that changed.
+      Actions::make([Action::make('saveAll')->label(__('filament-ai-writer::controls.save.label'))->action(fn () => $this->confirmSettings())])->key('saveActions')->alignEnd(),
     ]);
   }
 

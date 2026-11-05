@@ -278,7 +278,7 @@ final class Credits
       $policy = $this->lockScope($context->scopeKey(), $context->scope);
       AiWriterPlugin::get()->controlsService()->authorize($context);
       $period = $policy->default_limit === null ? null : $this->period($policy);
-      return $this->policySnapshot($policy) + ['renews_at' => $period?->ends_at];
+      return $this->policySnapshot($policy) + ['renews_at' => $period?->ends_at, 'period_started_at' => $period?->starts_at, 'period_timezone' => $period?->timezone];
     });
   }
 
@@ -289,6 +289,7 @@ final class Credits
       throw ValidationException::withMessages(['renewal' => __('filament-ai-writer::controls.validation.renewal')]);
     }
     $this->admin($context, null, 'quota_policy', $reason, function ($policy) use ($enabled, $limit, $renewal): void {
+      $previousRenewal = $policy->renewal;
       // Close an elapsed old period before scheduling the new calendar.
       $period = $policy->default_limit === null ? null : $this->period($policy);
       $this->table('policies')->where('scope_key', $policy->scope_key)->update([
@@ -298,11 +299,11 @@ final class Credits
       $policy->renewal = $renewal;
       if ($period === null) {
         $this->newPeriod($policy);
-      } elseif ($period->ends_at === null && $renewal !== 'manual') {
-        // Approved manual -> calendar rule: preserve this balance until the next
-        // cut of the new calendar. Do not create a new period now.
+      } elseif ($renewal !== $previousRenewal) {
+        // Changing the schedule keeps the balance: no new period, consumption, reservations and extras stay. Only the
+        // current period's end moves, to the next cut of the new schedule from now (none for manual).
         $this->table('credit_periods')->where('id', $period->id)->update([
-          'ends_at' => $this->cutoff($renewal, $period->timezone),
+          'renewal' => $renewal, 'ends_at' => $this->cutoff($renewal, $period->timezone),
         ]);
       }
     });
@@ -347,6 +348,38 @@ final class Credits
       $this->validPolicy($policy);
       $this->newPeriod($policy);
     });
+  }
+
+  /**
+   * Credit position of several directory actors with a fixed number of reads and no writes (no balance or period is
+   * created, unlike balance()). An elapsed period reads as unused until the next generation or detail view rolls it.
+   *
+   * @param array<int, ActorIdentity> $actors
+   * @return array<string, array{limit: ?int, consumed: int, reserved: int, extras: int, available: ?int}> by actor key
+   */
+  public function overview(ControlContext $context, array $actors): array
+  {
+    AiWriterPlugin::get()->controlsService()->authorize($context);
+    $policy = $this->table('policies')->where('scope_key', $context->scopeKey())->first();
+    $keys = array_map(fn (ActorIdentity $actor): string => $actor->key(), $actors);
+    $default = $policy?->default_limit === null ? null : (int) $policy->default_limit;
+    $settings = $keys === [] ? collect() : $this->table('credit_actors')->where('scope_key', $context->scopeKey())->whereIn('actor_key', $keys)->get()->keyBy('actor_key');
+    $period = $policy?->active_period === null ? null : $this->table('credit_periods')->where('id', $policy->active_period)->first();
+    $live = $period !== null && ($period->ends_at === null || CarbonImmutable::now('UTC')->lt(CarbonImmutable::parse($period->ends_at, 'UTC')));
+    $balanceIds = $live ? $settings->pluck('active_balance')->filter()->all() : [];
+    $balances = $balanceIds === [] ? collect() : $this->table('credit_balances')->whereIn('id', $balanceIds)->where('period_id', $period->id)->get()->keyBy('id');
+    $overview = [];
+    foreach ($keys as $key) {
+      $row = $settings->get($key);
+      $balance = $row?->active_balance === null ? null : $balances->get($row->active_balance);
+      $limit = $row?->limit ?? $default;
+      $limit = $limit === null ? null : (int) $limit;
+      [$extras, $consumed, $reserved] = [(int) ($balance?->extras ?? 0), (int) ($balance?->consumed ?? 0), (int) ($balance?->reserved ?? 0)];
+      $overview[$key] = ['limit' => $limit, 'consumed' => $consumed, 'reserved' => $reserved, 'extras' => $extras,
+        'available' => $limit === null ? null : max(0, $limit + $extras - $consumed - $reserved)];
+    }
+
+    return $overview;
   }
 
   public function balance(ControlContext $context, ActorIdentity $actor): array
@@ -418,6 +451,7 @@ final class Credits
     $period = $balance === null ? null : $this->table('credit_periods')->where('id', $balance->period_id)->first();
     return ['enabled' => (bool) $policy->quota_enabled, 'limit' => $limit === null ? null : (int) $limit,
       'individual_limit' => $settings?->limit === null ? null : (int) $settings->limit,
+      'default_limit' => $policy->default_limit === null ? null : (int) $policy->default_limit,
       'extras' => (int) ($balance?->extras ?? 0), 'consumed' => (int) ($balance?->consumed ?? 0), 'reserved' => (int) ($balance?->reserved ?? 0),
       'available' => $limit === null ? null : max(0, (int) $limit + (int) ($balance?->extras ?? 0) - (int) ($balance?->consumed ?? 0) - (int) ($balance?->reserved ?? 0)),
       'period_id' => $period?->id, 'balance_id' => $balance?->id, 'renews_at' => $period?->ends_at];
@@ -486,6 +520,12 @@ final class Credits
     $policy->active_period = $id;
     return $this->table('credit_periods')->where('id', $id)->first();
   }
+  /** The next cut of a schedule from now in a timezone (the period's own, by default the application's); null for manual. Read-only. */
+  public function nextCut(string $renewal, ?string $timezone = null): ?CarbonImmutable
+  {
+    return $this->cutoff($renewal, $timezone ?? config('app.timezone'));
+  }
+
   private function cutoff(string $renewal, string $timezone): ?CarbonImmutable
   {
     $local = CarbonImmutable::now('UTC')->setTimezone($timezone);

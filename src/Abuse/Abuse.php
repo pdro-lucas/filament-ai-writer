@@ -64,6 +64,50 @@ final class Abuse
     });
   }
 
+  /**
+   * Which of the listed actors the failure protection is pausing right now, in one grouped query (read-only). Mirrors the
+   * `failure_pause` rule of status(); the short-lived frequency and concurrency refusals are not evaluated here.
+   *
+   * @param array<int, ActorIdentity> $actors
+   * @return array<string, true> actor key => true
+   */
+  public function pausedByFailures(ControlContext $context, array $actors): array
+  {
+    AiWriterPlugin::get()->controlsService()->authorize($context);
+    $policy = $this->credits->connection()->table('filament_ai_writer_policies')->where('scope_key', $context->scopeKey())->first();
+    if ($actors === [] || $policy === null) {
+      return [];
+    }
+    try {
+      $settings = $this->settings($policy);
+    } catch (GenerationFailure) {
+      return [];
+    }
+    if (!$settings['failure_enabled'] || $settings['failure_limit'] === null || $settings['failure_window_seconds'] === null || $settings['failure_pause_seconds'] === null) {
+      return [];
+    }
+    $now = CarbonImmutable::now('UTC');
+    $time = "CASE WHEN status = 'recovered' THEN deadline_at ELSE completed_at END";
+    $wanted = [];
+    foreach ($actors as $actor) {
+      $wanted[$actor->key()] = true;
+    }
+    $rows = $this->credits->connection()->table('filament_ai_writer_operations')->where('scope_key', $context->scopeKey())
+      ->whereIn('actor_key', array_keys($wanted))->whereIn('status', ['failed', 'recovered'])
+      ->whereRaw($time . ' > ?', [$now->subSeconds($settings['failure_window_seconds'])->format('Y-m-d H:i:s.u')])
+      ->selectRaw('actor_type, actor_id, COUNT(*) AS failures, MAX(' . $time . ') AS latest')->groupBy('actor_type', 'actor_id')->get();
+    $paused = [];
+    foreach ($rows as $row) {
+      $key = (new ActorIdentity($row->actor_type, $row->actor_id))->key();
+      if (isset($wanted[$key]) && (int) $row->failures >= $settings['failure_limit']
+        && CarbonImmutable::parse($row->latest, 'UTC')->addSeconds($settings['failure_pause_seconds'])->gt($now)) {
+        $paused[$key] = true;
+      }
+    }
+
+    return $paused;
+  }
+
   public function ownStatus(ControlContext $context): array
   {
     $authorize = function () use ($context): void {

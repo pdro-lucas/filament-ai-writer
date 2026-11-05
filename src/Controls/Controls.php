@@ -31,6 +31,24 @@ final class Controls
     return (bool) (DB::table('filament_ai_writer_policies')->where('scope_key', $context->scopeKey())->value('enabled') ?? true);
   }
 
+  /**
+   * Which of the listed actors are blocked, in one query. Read-only; callers pass actors from the authorized directory.
+   *
+   * @param array<int, ActorIdentity> $actors
+   * @return array<string, true> actor key => true
+   */
+  public function blockedAmong(ControlContext $context, array $actors): array
+  {
+    $this->authorize($context);
+    if ($actors === []) {
+      return [];
+    }
+    $keys = DB::table('filament_ai_writer_actor_blocks')->where('scope_key', $context->scopeKey())
+      ->whereIn('actor_key', array_map(fn (ActorIdentity $actor): string => $actor->key(), $actors))->pluck('actor_key');
+
+    return array_fill_keys($keys->all(), true);
+  }
+
   public function blocked(ControlContext $context, ActorIdentity $actor): bool
   {
     $this->authorize($context);
