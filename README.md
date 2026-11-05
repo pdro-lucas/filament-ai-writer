@@ -2,6 +2,12 @@
 
 ![Filament AI Writer: AI text in any form field, with credits, limits and usage you control](art/cover.png)
 
+[![Latest version](https://img.shields.io/packagist/v/pdro-lucas/filament-ai-writer?style=flat-square&logo=packagist)](https://packagist.org/packages/pdro-lucas/filament-ai-writer)
+[![Total downloads](https://img.shields.io/packagist/dt/pdro-lucas/filament-ai-writer?style=flat-square&logo=packagist)](https://packagist.org/packages/pdro-lucas/filament-ai-writer)
+[![PHP version](https://img.shields.io/packagist/dependency-v/pdro-lucas/filament-ai-writer/php?style=flat-square&logo=php)](https://packagist.org/packages/pdro-lucas/filament-ai-writer)
+[![Filament 4 and 5](https://img.shields.io/badge/Filament-4%20%7C%205-f59e0b?style=flat-square&logo=filament)](https://packagist.org/packages/pdro-lucas/filament-ai-writer)
+[![License](https://img.shields.io/packagist/l/pdro-lucas/filament-ai-writer?style=flat-square)](LICENSE.md)
+[![Tests](https://img.shields.io/github/actions/workflow/status/pdro-lucas/filament-ai-writer/tests.yml?branch=main&style=flat-square&logo=githubactions&label=tests)](https://github.com/pdro-lucas/filament-ai-writer/actions/workflows/tests.yml)
 
 A Filament plugin for AI-assisted writing, with per-panel registration, host-defined permissions and a shared generation service. Its form action integrates OpenAI, Anthropic, Gemini and OpenRouter with scalar and array fields. Supported endpoints do not imply support for every model or optional API feature.
 
